@@ -329,6 +329,20 @@ main {
 .modal .row { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
 .modal .input { width: 100%; }
 
+/* ---- Célébration fin de série ---- */
+.celebrate { position: relative; text-align: center; overflow: hidden; }
+.celebrate .confetti-cv { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.celebrate > *:not(.confetti-cv) { position: relative; z-index: 1; }
+.cel-emoji { font-size: 54px; line-height: 1; animation: celpop .5s ease; }
+@keyframes celpop { 0% { transform: scale(0) } 70% { transform: scale(1.25) } 100% { transform: scale(1) } }
+.celebrate h2 { margin: 6px 0 2px; }
+.cel-name { font-weight: 800; color: var(--accent); margin: 0 0 14px; font-size: 17px; }
+.cel-stats { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin: 6px 0 14px; }
+.cel-stat { background: var(--bg3); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 88px; }
+.cel-stat b { display: block; font-size: 20px; color: var(--text); }
+.cel-stat span { font-size: 11px; color: var(--muted); }
+.cel-msg { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
   background: var(--bg3); border: 1px solid var(--line); color: var(--text);

@@ -1936,6 +1936,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
     // it counts as a re-watch (+1 visionnage on each). Stays in place.
     head.querySelector('.markall-seen').onclick = (ev) => {
       ev.stopPropagation();
+      const wasComplete = isShowComplete(sh);
       const aired = airedEps();
       if (!aired.length) return;
       const allSeen = aired.every(e => isSeen(sh, sn, e.n));
@@ -1947,6 +1948,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
         toast('Saison marquée comme vue');
       }
       buildBody(); updateSyncStatus();
+      if (!wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
     };
     // "Tout non vu": clear seen AND rewatch counts for the whole season. Stays in place.
     head.querySelector('.markall-unseen').onclick = (ev) => {
@@ -1985,11 +1987,78 @@ function epHtml(sh, season, e) {
   </div>`;
 }
 
+// ---- Fin de série : célébration + confettis ----
+function isShowComplete(sh) {
+  const m = metaFor(sh);
+  return !!(m && m.totalEpisodes > 0 && sh.seenKeys.size >= m.totalEpisodes);
+}
+function fmtDur(mins) {
+  const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), mm = Math.round(mins % 60);
+  if (d > 0) return h > 0 ? `${d} j ${h} h` : `${d} j`;
+  if (h > 0) return mm > 0 ? `${h} h ${mm}` : `${h} h`;
+  return `${mm} min`;
+}
+function celebrateCompletion(sh) {
+  const m = metaFor(sh);
+  const episodes = sh.seenKeys.size;
+  const watchTime = fmtDur(episodes * ((m && m.runtime) || DEFAULT_RUNTIME));
+  const wd = showWatchDates(sh);
+  let spanTxt = null;
+  if (wd.first && wd.last) {
+    const days = Math.max(1, Math.round((Date.parse(String(wd.last).replace(' ', 'T')) - Date.parse(String(wd.first).replace(' ', 'T'))) / 86400000));
+    spanTxt = days >= 365 ? `${Math.round(days / 365 * 10) / 10} an(s)` : days >= 30 ? `${Math.round(days / 30)} mois` : `${days} j`;
+  }
+  const seasons = m ? m.seasons.length : 0;
+  const rating = sh.showRating;
+  showModal(`
+    <div class="celebrate">
+      <canvas class="confetti-cv"></canvas>
+      <div class="cel-emoji">🎉</div>
+      <h2>Série terminée !</h2>
+      <p class="cel-name">${esc(displayName(sh))}</p>
+      <div class="cel-stats">
+        <div class="cel-stat"><b>${episodes}</b><span>épisodes vus</span></div>
+        <div class="cel-stat"><b>${watchTime}</b><span>de visionnage</span></div>
+        ${spanTxt ? `<div class="cel-stat"><b>${spanTxt}</b><span>pour la terminer</span></div>` : (seasons ? `<div class="cel-stat"><b>${seasons}</b><span>saison(s)</span></div>` : '')}
+      </div>
+      ${wd.first ? `<p class="cel-msg">Du ${fmtFull(wd.first)} au ${fmtFull(wd.last)}${rating ? ` · Ta note : ${'★'.repeat(rating)}` : ''}</p>` : ''}
+      <button class="btn primary" data-close>🎊 Génial !</button>
+    </div>`, (root) => { runConfetti(root.querySelector('.confetti-cv')); });
+}
+function runConfetti(canvas) {
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  const box = canvas.parentElement;
+  canvas.width = box.clientWidth; canvas.height = Math.max(300, box.clientHeight);
+  const colors = ['#f5c518', '#ff5e5e', '#5ec8ff', '#7CFC00', '#ff9ff3', '#ffd34e', '#a78bfa'];
+  const parts = Array.from({ length: 150 }, () => ({
+    x: Math.random() * canvas.width, y: Math.random() * -canvas.height,
+    r: 4 + Math.random() * 6, c: colors[(Math.random() * colors.length) | 0],
+    vy: 2 + Math.random() * 3.5, vx: -1.5 + Math.random() * 3,
+    rot: Math.random() * 6.28, vr: -0.25 + Math.random() * 0.5,
+  }));
+  let frames = 0;
+  const tick = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.03; p.rot += p.vr;
+      if (p.y > canvas.height + 20) { p.y = -20; p.x = Math.random() * canvas.width; }
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = p.c; ctx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * 0.6);
+      ctx.restore();
+    }
+    if (++frames < 260 && document.body.contains(canvas)) requestAnimationFrame(tick);
+    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+  tick();
+}
+
 function wireEpisodes(container, sh, season, onChange, opts) {
   container.querySelectorAll('.ep').forEach(row => {
     const n = parseInt(row.dataset.n, 10);
     row.querySelector('[data-act="seen"]').onclick = () => {
       const wasSeen = isSeen(sh, season, n);
+      const wasComplete = isShowComplete(sh);
       toggleSeen(sh, season, n);
       const seen = isSeen(sh, season, n);
       row.classList.toggle('seen', seen);
@@ -1999,8 +2068,9 @@ function wireEpisodes(container, sh, season, onChange, opts) {
       // every earlier aired episode as seen.
       if (seen && !wasSeen && opts && opts.getPrevUnseen) {
         const prev = opts.getPrevUnseen(season, n);
-        if (prev.length) offerMarkPrevious(sh, prev, season, n);
+        if (prev.length) { offerMarkPrevious(sh, prev, season, n); return; }
       }
+      if (seen && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
     };
     const rwEl = row.querySelector('[data-act="rw"]');
     const paintRw = () => {
@@ -2060,6 +2130,7 @@ function offerMarkPrevious(sh, prevList, season, n) {
         updateSyncStatus();
         closeModal();
         toast(`${cnt} épisode(s) marqué(s) comme vu(s)`);
+        if (isShowComplete(sh)) celebrateCompletion(sh);
       };
     });
 }
@@ -2711,6 +2782,11 @@ function exportData() {
 function applyDataObject(obj) {
   for (const k of Object.keys(DATA)) delete DATA[k];
   Object.assign(DATA, obj);
+  // Defensive : un import corrompu peut transformer des tableaux en objets ;
+  // on les recoerce pour que l'app ne plante jamais sur une itération.
+  for (const k of ['shows', 'seen', 'movies', 'emotions', 'episodeRatings', 'rewatched', 'lists', 'latest', 'movieRatings']) {
+    if (DATA[k] != null && !Array.isArray(DATA[k])) DATA[k] = Object.values(DATA[k]);
+  }
 }
 async function persistDataOverride(obj) {
   await idbSet('dataOverride', obj);
