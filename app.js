@@ -8,6 +8,49 @@ const TMDB = 'https://api.themoviedb.org/3';
 const APP_VERSION = '2'; // numéro de version affiché dans « À propos »
 const DEFAULT_RUNTIME = 42; // minutes, fallback when unknown
 
+// Notes de version (les plus récentes en premier), affichées dans #/changelog.
+const CHANGELOG = [
+  { date: '20 août 2026', title: 'Noms en français', items: [
+    'Les séries et les films affichent désormais leur titre français sous les affiches (plus les titres anglais importés).',
+    'La recherche dans la bibliothèque reconnaît aussi bien le titre français que le nom d\'origine.',
+  ] },
+  { date: '14 août 2026', title: 'Fin de série & sauvegardes', items: [
+    'Une petite célébration animée (confettis) apparaît quand vous terminez une série, avec vos statistiques de visionnage.',
+    'Import de sauvegarde plus robuste : une sauvegarde un peu abîmée ne bloque plus l\'application.',
+    'Dans Explorer, les œuvres déjà dans votre bibliothèque sont signalées « Dans ma liste » et ouvrent directement leur vraie fiche.',
+  ] },
+  { date: '14 août 2026', title: 'Épisodes d\'animes', items: [
+    'Correction de l\'alignement des épisodes pour les animes à numérotation continue (Naruto, Bleach, One Piece…) : les épisodes cochés correspondent enfin à la bonne saison.',
+    'À l\'ouverture d\'une série, on vous emmène juste après le dernier épisode vu (les épisodes sautés ne bloquent plus).',
+  ] },
+  { date: '11 août 2026', title: 'Nouvelle navigation', items: [
+    'Barre de navigation en bas : Séries · Films · Explorer · Profil.',
+    'La page Séries a deux onglets : « À voir » (par catégories) et « À suivre » (le prochain épisode de chaque série).',
+    'Explorer : cherchez de nouvelles séries et films, avec un aperçu complet avant de les ajouter.',
+    'Tri simplifié (alphabétique / ajout récent) et réorganisation des catégories de l\'accueil.',
+    'Statuts de séries en français (En cours, Terminée, Annulée…).',
+    'Sur une saison : boutons « Tout vu » / « Tout non vu ».',
+    'Suivi automatique des séries dont vous avez vu au moins un épisode.',
+  ] },
+  { date: '6 août 2026', title: 'Installation & sauvegarde', items: [
+    'Installation sur téléphone à une adresse fixe : vos données restent d\'une mise à jour à l\'autre, sans ré-importer.',
+    'Possibilité de retirer une note donnée par erreur (bouton ✕ sur les étoiles).',
+  ] },
+  { date: '4 août 2026', title: 'Notes, réactions & profil', items: [
+    'Nom de profil personnalisable.',
+    'Réagissez aux films comme aux épisodes de série.',
+    'Noter une œuvre ne vous fait plus changer d\'onglet ; les étoiles se remplissent simplement.',
+    'Récupération des dates de visionnage des films et de vos films favoris.',
+    'Export / Import : sauvegarde complète de tout votre historique, transférable sur un autre appareil.',
+  ] },
+  { date: '3 août 2026', title: 'Fiches enrichies', items: [
+    'Fiches détaillées « À propos » : casting, bande-annonce, plateformes de streaming, note du public, dates.',
+    'Fiche complète pour les films.',
+    'Listes personnalisées modifiables, favoris, statistiques films.',
+    'Adaptation à l\'écran des iPhone (encoche).',
+  ] },
+];
+
 // TV Time "star-meter" reaction ids -> label/emoji. The 5 first ids are the
 // confirmed reactions (great=1, good=8, wow=3, ok=6, bad=7); the rest are older
 // best-effort labels.
@@ -765,14 +808,14 @@ function openMovie(name) {
   scrollByHash[location.hash || '#/movies'] = window.scrollY;
   location.hash = '#/movie/' + encodeURIComponent(name);
 }
-const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Profil', settings: 'Réglages' };
+const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Profil', settings: 'Réglages', changelog: 'Notes de version' };
 function backLabel() { return BACK_LABELS[(backTarget || '').replace(/^#\//, '').split('/')[0]] || 'Retour'; }
 async function render() {
   const [name, ...rest] = currentRoute().split('/');
   if (name !== 'show' && name !== 'movie') backTarget = location.hash || '#/home';
   if (name !== 'show') lastShowKey = null; // re-opening a show counts as a fresh visit
   // Library / stats / lists / settings live under the "Profil" tab.
-  const navName = ['library', 'stats', 'lists', 'settings'].includes(name) ? 'profile' : (name === 'preview' ? 'explore' : name);
+  const navName = ['library', 'stats', 'lists', 'settings', 'changelog'].includes(name) ? 'profile' : (name === 'preview' ? 'explore' : name);
   document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navName));
   const el = document.getElementById('app');
   const fn = routes[name] || routes['library'];
@@ -819,8 +862,16 @@ function cachedTmdbName(sh) {
   return '';
 }
 function displayName(sh) {
-  if (sh.name && sh.name.trim()) return sh.name;
-  return cachedTmdbName(sh) || 'Série sans titre';
+  // Préfère le titre TMDB localisé (français) quand il est en cache, sinon le nom importé.
+  return cachedTmdbName(sh) || (sh.name && sh.name.trim()) || 'Série sans titre';
+}
+// Titre français d'un film si connu (depuis le cache TMDB), sinon le nom importé.
+function movieDisplayName(m) {
+  const rec = tmdbCache.movies && tmdbCache.movies[m.name];
+  if (rec && rec.title) return rec.title;
+  const id = rec && rec.id;
+  if (id && tmdbCache.movieMeta && tmdbCache.movieMeta[id] && tmdbCache.movieMeta[id].title) return tmdbCache.movieMeta[id].title;
+  return m.name;
 }
 function userDisplayName() {
   return (userState.profileName && userState.profileName.trim()) || DATA.user?.name || '';
@@ -1443,7 +1494,7 @@ function movieCardHtml(m) {
   const delBtn = m.custom ? `<button class="card-del" data-mdel="${esc(m.name)}" title="Retirer ce film ajouté">🗑</button>` : '';
   return `<div class="show-card movie-card" data-mname="${esc(m.name)}">
     <div class="poster" data-mposter="${esc(m.name)}">
-      <div class="fallback-title">${esc(m.name)}</div>
+      <div class="fallback-title">${esc(movieDisplayName(m))}</div>
       ${rating}
       ${rwBadge}
       ${rwBtn}
@@ -1451,7 +1502,7 @@ function movieCardHtml(m) {
       <button class="find-poster" data-mfind="${esc(m.name)}" title="Chercher une affiche sur TMDB">🔍</button>
       ${btn}
     </div>
-    <div class="title">${esc(m.name)}</div>
+    <div class="title">${esc(movieDisplayName(m))}</div>
     <div class="meta">${esc(metaBits || (st === 'watched' ? 'Vu' : 'À voir'))}</div>
   </div>`;
 }
@@ -1495,13 +1546,15 @@ function wireMovieButtons(container) {
 // Resolve a movie poster from TMDB by name (+year), cached in tmdbCache.movies.
 async function resolveMovie(name, year) {
   if (!tmdbCache.movies) tmdbCache.movies = {};
-  if (name in tmdbCache.movies) return tmdbCache.movies[name];
+  const cached = tmdbCache.movies[name];
+  // Déjà résolu (y compris le titre français) OU marqué introuvable -> on garde.
+  if (cached === null || (cached && 'title' in cached)) return cached;
   try {
     const q = `/search/movie?query=${encodeURIComponent(name)}${year ? '&year=' + year : ''}`;
     const res = await tmdbFetch(q);
     const hit = (res.results && res.results[0]) || null;
-    tmdbCache.movies[name] = hit ? { id: hit.id, poster: hit.poster_path || null } : null;
-  } catch { tmdbCache.movies[name] = null; }
+    tmdbCache.movies[name] = hit ? { id: hit.id, poster: hit.poster_path || null, title: hit.title || null } : null;
+  } catch { if (!cached) tmdbCache.movies[name] = null; }
   scheduleSaveCache();
   return tmdbCache.movies[name];
 }
@@ -1519,6 +1572,11 @@ async function hydrateMoviePosters(container, list) {
       try {
         const hit = await resolveMovie(m.name, movieYear(m));
         if (hit && hit.poster) slot.insertAdjacentHTML('afterbegin', `<img loading="lazy" src="${IMG(hit.poster)}" alt="">`);
+        if (hit && hit.title) {
+          const card = slot.closest('.movie-card');
+          if (card) { const t = card.querySelector('.title'); if (t) t.textContent = hit.title; }
+          const fb = slot.querySelector('.fallback-title'); if (fb) fb.textContent = hit.title;
+        }
       } catch {}
     }
   };
@@ -1595,7 +1653,7 @@ route('library', async (el) => {
     if (libFilter.kind === 'movie') {
       const pred = movieTabs.find(t => t[0] === libFilter.movieTab)[2];
       let list = allMovies.filter(pred);
-      if (q) list = list.filter(m => (m.name || '').toLowerCase().includes(q));
+      if (q) list = list.filter(m => ((m.name || '') + ' ' + movieDisplayName(m)).toLowerCase().includes(q));
       list.sort(LIB_SORTERS_MOVIE[libFilter.sort] || LIB_SORTERS_MOVIE.az);
       el.querySelector('#libCount').textContent = `${list.length} film(s)`;
       if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">🍿</div>Aucun film ici.</div>`; return; }
@@ -2426,6 +2484,7 @@ route('profile', async (el) => {
       <a class="menu-card" href="#/stats"><span class="ic">📊</span><b>Statistiques</b><small>Séries &amp; films</small></a>
       <a class="menu-card" href="#/lists"><span class="ic">📃</span><b>Listes</b><small>Créez et modifiez vos listes</small></a>
       <a class="menu-card" href="#/settings"><span class="ic">⚙️</span><b>Réglages</b><small>Clé TMDB, synchronisation, sauvegarde</small></a>
+      <a class="menu-card" href="#/changelog"><span class="ic">🆕</span><b>Notes de version</b><small>Les nouveautés de chaque mise à jour</small></a>
     </div>
     ${favSection('Séries favorites', '❤️', favSeries.length, 'favSeriesGrid', favSeries.map(s => cardHtml(s)).join(''))}
     ${favSection('Films favoris', '🎬', favMovies.length, 'favMoviesGrid', favMovies.map(m => movieCardHtml(m)).join(''))}`;
@@ -2440,6 +2499,19 @@ route('profile', async (el) => {
     wireMovieButtons(mg);
     hydrateMoviePosters(mg, favMovies);
   }
+});
+
+//////////////////////// Notes de version ////////////////////////
+route('changelog', async (el) => {
+  const entries = CHANGELOG.map(e => `
+    <div class="panel cl-entry">
+      <h3>${esc(e.title)} <span class="cl-date">${esc(e.date)}</span></h3>
+      <ul class="cl-list">${e.items.map(it => `<li>${esc(it)}</li>`).join('')}</ul>
+    </div>`).join('');
+  el.innerHTML = `
+    <a class="btn ghost sm" href="#/profile">← Profil</a>
+    <div class="page-head"><h1>🆕 Notes de version</h1><span class="sub">L'historique des nouveautés de l'application</span></div>
+    ${entries}`;
 });
 
 //////////////////////// Stats ////////////////////////
@@ -2707,6 +2779,7 @@ route('settings', async (el) => {
       <p class="hint" style="color:var(--muted)"><b>TV Time</b> · version ${APP_VERSION}<br>
       Données importées le ${esc((DATA.generatedAt || '').replace('T', ' '))}. Compte : ${esc(DATA.user?.mail || '')}.<br>
       ${(DATA.shows || []).length} séries · ${(DATA.seen || []).length} épisodes vus · ${((DATA.emotions || []).length + (DATA.episodeRatings || []).length)} réactions.</p>
+      <p style="margin-top:10px"><a class="btn ghost sm" href="#/changelog">🆕 Notes de version</a></p>
     </div>`;
 
   el.querySelector('#saveName').onclick = () => { userState.profileName = el.querySelector('#profileName').value.trim(); scheduleSaveState(); el.querySelector('#nameStatus').textContent = '✅ Enregistré'; toast('Nom enregistré'); };
