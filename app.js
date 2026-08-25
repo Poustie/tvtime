@@ -822,61 +822,26 @@ function openMovie(name) {
 const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Profil', settings: 'Réglages', changelog: 'Notes de version' };
 function backLabel() { return BACK_LABELS[(backTarget || '').replace(/^#\//, '').split('/')[0]] || 'Retour'; }
 
-// Slide transition when moving from one main category to another (swipe/tap).
+// Set by an interactive swipe when it already painted the target page itself.
 let _lastTopRoute = null;
-let _suppressRender = false; // set by an interactive swipe that already painted the target
-function _makeSnapshot() {
-  const el = document.getElementById('app');
-  const sy = window.scrollY;
-  const snap = el.cloneNode(true);
-  snap.removeAttribute('id');
-  snap.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
-  snap.classList.add('page-snap');
-  snap.style.transform = `translate(0, ${-sy}px)`;
-  document.body.appendChild(snap);
-  return { snap, sy };
-}
-function _runSlide(el, snapObj, dir) {
-  const { snap, sy } = snapObj;
-  const from = dir > 0 ? '100%' : '-100%';   // new page enters from this side
-  const to = dir > 0 ? '-100%' : '100%';     // old page leaves to this side
-  const dur = 260;
-  el.classList.add('page-anim');
-  el.style.transition = 'none';
-  el.style.transform = `translateX(${from})`;
-  void el.offsetWidth;                        // flush the start position
-  el.style.transition = `transform ${dur}ms ease`;
-  el.style.transform = 'translateX(0)';
-  snap.style.transition = `transform ${dur}ms ease`;
-  snap.style.transform = `translate(${to}, ${-sy}px)`;
-  setTimeout(() => {
-    el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
-    snap.remove();
-  }, dur + 40);
-}
+let _suppressRender = false;
 async function render() {
-  if (_suppressRender) { _suppressRender = false; return; } // interactive swipe already painted the page
+  if (_suppressRender) { _suppressRender = false; return; } // an interactive swipe already painted the page
+  document.querySelectorAll('.page-snap').forEach(n => n.remove()); // safety: never leave a frozen page behind
   const [name, ...rest] = currentRoute().split('/');
   if (name !== 'show' && name !== 'movie') backTarget = location.hash || '#/home';
   if (name !== 'show') lastShowKey = null; // re-opening a show counts as a fresh visit
   // Library / stats / lists / settings live under the "Profil" tab.
   const navName = ['library', 'stats', 'lists', 'settings', 'changelog'].includes(name) ? 'profile' : (name === 'preview' ? 'explore' : name);
   document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navName));
-  // Direction of the slide, only between the four main categories.
-  const newTop = SWIPE_ROUTES.includes(name) ? name : null;
-  let dir = 0;
-  if (_lastTopRoute && newTop && _lastTopRoute !== newTop) {
-    dir = SWIPE_ROUTES.indexOf(newTop) > SWIPE_ROUTES.indexOf(_lastTopRoute) ? 1 : -1;
-  }
-  _lastTopRoute = newTop;
+  _lastTopRoute = SWIPE_ROUTES.includes(name) ? name : null;
   const el = document.getElementById('app');
-  const snapObj = dir !== 0 ? _makeSnapshot() : null;
+  el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag'); // clear any leftover drag transform
   const fn = routes[name] || routes['library'];
   el.innerHTML = '<div class="loading">Chargement…</div>';
   try { await fn(el, rest); } catch (e) { el.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`; }
   const saved = scrollByHash[location.hash];
   window.scrollTo(0, name !== 'show' && name !== 'movie' && saved ? saved : 0);
-  if (snapObj) _runSlide(el, snapObj, dir);
 }
 window.addEventListener('hashchange', render);
 
@@ -1834,8 +1799,10 @@ document.addEventListener('click', (e) => {
   if (card && !(e.target.closest && e.target.closest('button'))) { e.stopPropagation(); e.preventDefault(); }
 }, true);
 
-// ---- Interactive swipe: drag the page with your finger, snap back if the
-//      gesture is too short, otherwise complete the change of category. ----
+// ---- Interactive swipe: only the CURRENT page is dragged under the finger.
+//      Too short a gesture -> it snaps back; far enough -> the old page slides
+//      out and the new category slides in. A single moving pane means the two
+//      pages can never end up stacked on top of each other. ----
 const SWIPE_ROUTES = ['home', 'movies', 'explore', 'profile'];
 let _dg = null;        // active drag state (null when idle)
 let _dgBusy = false;   // a release animation is currently running
@@ -1846,43 +1813,39 @@ function _renderRouteInto(el, name) {
   const fn = routes[name] || routes['library'];
   try { fn(el, []); } catch {}
 }
-function _dgAnimate(dg, commit) {
+function _dgRelease(dg, dx) {
   const el = document.getElementById('app');
   const W = dg.W, dir = dg.dir, dur = 220;
+  const threshold = Math.max(60, W * 0.28);
+  const commit = dg.hasNext && Math.abs(dx) >= threshold && ((dir > 0 && dx < 0) || (dir < 0 && dx > 0));
   el.style.transition = `transform ${dur}ms ease`;
-  if (dg.out) dg.out.snap.style.transition = `transform ${dur}ms ease`;
   requestAnimationFrame(() => {
-    if (dg.hasIncoming) {
-      if (commit) {
-        el.style.transform = 'translateX(0)';
-        if (dg.out) dg.out.snap.style.transform = `translate(${dir > 0 ? -W : W}px, ${-dg.out.sy}px)`;
-      } else {
-        el.style.transform = `translateX(${dir > 0 ? W : -W}px)`;
-        if (dg.out) dg.out.snap.style.transform = `translate(0px, ${-dg.out.sy}px)`;
-      }
-    } else {
-      el.style.transform = 'translateX(0)'; // edge rubber-band back
-    }
+    el.style.transform = commit ? `translateX(${dir > 0 ? -W : W}px)` : 'translateX(0)';
   });
   setTimeout(() => {
     if (commit) {
-      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
-      if (dg.out) dg.out.snap.remove();
+      // Old page has slid off. Paint the target and slide it in from the far side.
       _lastTopRoute = dg.target;
       _suppressRender = true;
       backTarget = '#/' + dg.target;
-      location.hash = '#/' + dg.target; // change the URL without re-rendering
+      location.hash = '#/' + dg.target;
       _setActiveNav(dg.target);
+      el.style.transition = 'none';
+      _renderRouteInto(el, dg.target);
       window.scrollTo(0, 0);
-    } else if (dg.hasIncoming) {
-      _renderRouteInto(el, dg.fromName); // put the original page back
-      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
-      dg.out.snap.remove();
-      window.scrollTo(0, dg.out.sy);
+      el.style.transform = `translateX(${dir > 0 ? W : -W}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = `transform ${dur}ms ease`;
+        el.style.transform = 'translateX(0)';
+      });
+      setTimeout(() => {
+        el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag');
+        _dgBusy = false;
+      }, dur + 30);
     } else {
-      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
+      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag');
+      _dgBusy = false;
     }
-    _dgBusy = false;
   }, dur + 30);
 }
 document.addEventListener('touchstart', (e) => {
@@ -1894,7 +1857,7 @@ document.addEventListener('touchstart', (e) => {
   if (document.getElementById('modalRoot') && document.getElementById('modalRoot').children.length) return;
   const cur = currentRoute().split('/')[0];
   if (!SWIPE_ROUTES.includes(cur)) return;
-  _dg = { fromName: cur, startX: e.touches[0].clientX, startY: e.touches[0].clientY, locked: false, hasIncoming: false, dir: 0, W: window.innerWidth };
+  _dg = { fromName: cur, startX: e.touches[0].clientX, startY: e.touches[0].clientY, locked: false, dir: 0, hasNext: false, W: window.innerWidth };
 }, { passive: true });
 document.addEventListener('touchmove', (e) => {
   if (!_dg || _dgBusy) return;
@@ -1906,40 +1869,26 @@ document.addEventListener('touchmove', (e) => {
     _dg.locked = true;
     _dg.dir = dx < 0 ? 1 : -1; // drag left = next category, drag right = previous
     const j = SWIPE_ROUTES.indexOf(_dg.fromName) + _dg.dir;
+    _dg.hasNext = j >= 0 && j < SWIPE_ROUTES.length;
+    _dg.target = _dg.hasNext ? SWIPE_ROUTES[j] : null;
     const el = document.getElementById('app');
-    el.classList.add('page-anim');
+    el.classList.add('page-anim', 'page-drag');
     el.style.transition = 'none';
-    if (j >= 0 && j < SWIPE_ROUTES.length) {
-      _dg.target = SWIPE_ROUTES[j];
-      _dg.out = _makeSnapshot();          // freeze the current page as an overlay
-      window.scrollTo(0, 0);
-      _renderRouteInto(el, _dg.target);   // paint the incoming page behind, off-screen
-      el.style.transform = `translateX(${_dg.dir > 0 ? _dg.W : -_dg.W}px)`;
-      _dg.hasIncoming = true;
-    } else {
-      _dg.hasIncoming = false;            // first/last category -> rubber-band only
-    }
   }
   e.preventDefault(); // we own this horizontal gesture now
   const el = document.getElementById('app');
-  if (_dg.hasIncoming) {
-    el.style.transform = `translateX(${(_dg.dir > 0 ? _dg.W : -_dg.W) + dx}px)`;
-    if (_dg.out) _dg.out.snap.style.transform = `translate(${dx}px, ${-_dg.out.sy}px)`;
-  } else {
-    el.style.transform = `translateX(${dx * 0.35}px)`;
-  }
+  const factor = _dg.hasNext ? 1 : 0.3; // rubber-band at the first/last category
+  el.style.transform = `translateX(${dx * factor}px)`;
 }, { passive: false });
 document.addEventListener('touchend', (e) => {
   if (!_dg || !_dg.locked) { _dg = null; return; }
   const dg = _dg; _dg = null;
   const dx = (e.changedTouches[0] ? e.changedTouches[0].clientX : dg.startX) - dg.startX;
-  const threshold = Math.max(60, dg.W * 0.28);
-  const commit = dg.hasIncoming && Math.abs(dx) >= threshold && ((dg.dir > 0 && dx < 0) || (dg.dir < 0 && dx > 0));
   _dgBusy = true;
-  _dgAnimate(dg, commit);
+  _dgRelease(dg, dx);
 }, { passive: true });
 document.addEventListener('touchcancel', () => {
-  if (_dg && _dg.locked) { const dg = _dg; _dg = null; _dgBusy = true; _dgAnimate(dg, false); }
+  if (_dg && _dg.locked) { const dg = _dg; _dg = null; _dgBusy = true; _dgRelease(dg, 0); }
   else _dg = null;
 }, { passive: true });
 
