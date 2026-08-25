@@ -12,7 +12,7 @@ const DEFAULT_RUNTIME = 42; // minutes, fallback when unknown
 const CHANGELOG = [
   { id: 9, date: '25 août 2026', title: 'Navigation & confort', items: [
     'Changez de catégorie d\'un simple glissement (swipe) : Séries · Films · Explorer · Profil.',
-    'Transition animée : l\'ancienne page glisse sur le côté pendant que la nouvelle apparaît.',
+    'Le glissement suit votre doigt en direct : la page bouge avec vous, et revient en place si vous ne glissez pas assez.',
     'Une fenêtre « Nouveautés » vous résume les changements à la première ouverture après une mise à jour.',
     'Sur iPhone : le double-appui ne zoome plus par accident.',
     'Sur iPhone : la barre des catégories reste fixée tout en bas, sans à-coups.',
@@ -824,6 +824,7 @@ function backLabel() { return BACK_LABELS[(backTarget || '').replace(/^#\//, '')
 
 // Slide transition when moving from one main category to another (swipe/tap).
 let _lastTopRoute = null;
+let _suppressRender = false; // set by an interactive swipe that already painted the target
 function _makeSnapshot() {
   const el = document.getElementById('app');
   const sy = window.scrollY;
@@ -854,6 +855,7 @@ function _runSlide(el, snapObj, dir) {
   }, dur + 40);
 }
 async function render() {
+  if (_suppressRender) { _suppressRender = false; return; } // interactive swipe already painted the page
   const [name, ...rest] = currentRoute().split('/');
   if (name !== 'show' && name !== 'movie') backTarget = location.hash || '#/home';
   if (name !== 'show') lastShowKey = null; // re-opening a show counts as a fresh visit
@@ -1832,30 +1834,113 @@ document.addEventListener('click', (e) => {
   if (card && !(e.target.closest && e.target.closest('button'))) { e.stopPropagation(); e.preventDefault(); }
 }, true);
 
-// ---- Swipe left/right to move between the main categories ----
+// ---- Interactive swipe: drag the page with your finger, snap back if the
+//      gesture is too short, otherwise complete the change of category. ----
 const SWIPE_ROUTES = ['home', 'movies', 'explore', 'profile'];
-let _swX = 0, _swY = 0, _swOn = false;
+let _dg = null;        // active drag state (null when idle)
+let _dgBusy = false;   // a release animation is currently running
+function _setActiveNav(name) {
+  document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === name));
+}
+function _renderRouteInto(el, name) {
+  const fn = routes[name] || routes['library'];
+  try { fn(el, []); } catch {}
+}
+function _dgAnimate(dg, commit) {
+  const el = document.getElementById('app');
+  const W = dg.W, dir = dg.dir, dur = 220;
+  el.style.transition = `transform ${dur}ms ease`;
+  if (dg.out) dg.out.snap.style.transition = `transform ${dur}ms ease`;
+  requestAnimationFrame(() => {
+    if (dg.hasIncoming) {
+      if (commit) {
+        el.style.transform = 'translateX(0)';
+        if (dg.out) dg.out.snap.style.transform = `translate(${dir > 0 ? -W : W}px, ${-dg.out.sy}px)`;
+      } else {
+        el.style.transform = `translateX(${dir > 0 ? W : -W}px)`;
+        if (dg.out) dg.out.snap.style.transform = `translate(0px, ${-dg.out.sy}px)`;
+      }
+    } else {
+      el.style.transform = 'translateX(0)'; // edge rubber-band back
+    }
+  });
+  setTimeout(() => {
+    if (commit) {
+      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
+      if (dg.out) dg.out.snap.remove();
+      _lastTopRoute = dg.target;
+      _suppressRender = true;
+      backTarget = '#/' + dg.target;
+      location.hash = '#/' + dg.target; // change the URL without re-rendering
+      _setActiveNav(dg.target);
+      window.scrollTo(0, 0);
+    } else if (dg.hasIncoming) {
+      _renderRouteInto(el, dg.fromName); // put the original page back
+      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
+      dg.out.snap.remove();
+      window.scrollTo(0, dg.out.sy);
+    } else {
+      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
+    }
+    _dgBusy = false;
+  }, dur + 30);
+}
 document.addEventListener('touchstart', (e) => {
-  _swOn = false;
+  if (_dgBusy) { _dg = null; return; }
+  _dg = null;
   if (e.touches.length !== 1) return;
   const t = e.target;
-  // Leave horizontal scrollers, inputs and open modals alone.
   if (t.closest && t.closest('.cast-list, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
   if (document.getElementById('modalRoot') && document.getElementById('modalRoot').children.length) return;
-  if (!SWIPE_ROUTES.includes(currentRoute().split('/')[0])) return;
-  _swOn = true; _swX = e.touches[0].clientX; _swY = e.touches[0].clientY;
+  const cur = currentRoute().split('/')[0];
+  if (!SWIPE_ROUTES.includes(cur)) return;
+  _dg = { fromName: cur, startX: e.touches[0].clientX, startY: e.touches[0].clientY, locked: false, hasIncoming: false, dir: 0, W: window.innerWidth };
 }, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!_dg || _dgBusy) return;
+  const dx = e.touches[0].clientX - _dg.startX;
+  const dy = e.touches[0].clientY - _dg.startY;
+  if (!_dg.locked) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    if (Math.abs(dy) >= Math.abs(dx)) { _dg = null; return; } // vertical intent -> let it scroll / pull-to-refresh
+    _dg.locked = true;
+    _dg.dir = dx < 0 ? 1 : -1; // drag left = next category, drag right = previous
+    const j = SWIPE_ROUTES.indexOf(_dg.fromName) + _dg.dir;
+    const el = document.getElementById('app');
+    el.classList.add('page-anim');
+    el.style.transition = 'none';
+    if (j >= 0 && j < SWIPE_ROUTES.length) {
+      _dg.target = SWIPE_ROUTES[j];
+      _dg.out = _makeSnapshot();          // freeze the current page as an overlay
+      window.scrollTo(0, 0);
+      _renderRouteInto(el, _dg.target);   // paint the incoming page behind, off-screen
+      el.style.transform = `translateX(${_dg.dir > 0 ? _dg.W : -_dg.W}px)`;
+      _dg.hasIncoming = true;
+    } else {
+      _dg.hasIncoming = false;            // first/last category -> rubber-band only
+    }
+  }
+  e.preventDefault(); // we own this horizontal gesture now
+  const el = document.getElementById('app');
+  if (_dg.hasIncoming) {
+    el.style.transform = `translateX(${(_dg.dir > 0 ? _dg.W : -_dg.W) + dx}px)`;
+    if (_dg.out) _dg.out.snap.style.transform = `translate(${dx}px, ${-_dg.out.sy}px)`;
+  } else {
+    el.style.transform = `translateX(${dx * 0.35}px)`;
+  }
+}, { passive: false });
 document.addEventListener('touchend', (e) => {
-  if (!_swOn) return;
-  _swOn = false;
-  const dx = e.changedTouches[0].clientX - _swX;
-  const dy = e.changedTouches[0].clientY - _swY;
-  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return; // require a clear horizontal swipe
-  let i = SWIPE_ROUTES.indexOf(currentRoute().split('/')[0]);
-  if (i < 0) return;
-  i += (dx < 0 ? 1 : -1); // swipe left = next category, swipe right = previous
-  if (i < 0 || i >= SWIPE_ROUTES.length) return; // no wrap-around at the ends
-  location.hash = '#/' + SWIPE_ROUTES[i];
+  if (!_dg || !_dg.locked) { _dg = null; return; }
+  const dg = _dg; _dg = null;
+  const dx = (e.changedTouches[0] ? e.changedTouches[0].clientX : dg.startX) - dg.startX;
+  const threshold = Math.max(60, dg.W * 0.28);
+  const commit = dg.hasIncoming && Math.abs(dx) >= threshold && ((dg.dir > 0 && dx < 0) || (dg.dir < 0 && dx > 0));
+  _dgBusy = true;
+  _dgAnimate(dg, commit);
+}, { passive: true });
+document.addEventListener('touchcancel', () => {
+  if (_dg && _dg.locked) { const dg = _dg; _dg = null; _dgBusy = true; _dgAnimate(dg, false); }
+  else _dg = null;
 }, { passive: true });
 
 // progressively load posters for visible cards (only when a TMDB key is set)
