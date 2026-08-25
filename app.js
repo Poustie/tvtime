@@ -827,7 +827,7 @@ let _lastTopRoute = null;
 let _suppressRender = false;
 async function render() {
   if (_suppressRender) { _suppressRender = false; return; } // an interactive swipe already painted the page
-  document.querySelectorAll('.page-snap').forEach(n => n.remove()); // safety: never leave a frozen page behind
+  document.querySelectorAll('.swipe-track').forEach(n => n.remove()); // safety: never leave a stray rail behind
   const [name, ...rest] = currentRoute().split('/');
   if (name !== 'show' && name !== 'movie') backTarget = location.hash || '#/home';
   if (name !== 'show') lastShowKey = null; // re-opening a show counts as a fresh visit
@@ -836,7 +836,7 @@ async function render() {
   document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navName));
   _lastTopRoute = SWIPE_ROUTES.includes(name) ? name : null;
   const el = document.getElementById('app');
-  el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag'); // clear any leftover drag transform
+  el.style.visibility = ''; el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag'); // clear any leftover swipe state
   const fn = routes[name] || routes['library'];
   el.innerHTML = '<div class="loading">Chargement…</div>';
   try { await fn(el, rest); } catch (e) { el.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`; }
@@ -1799,10 +1799,10 @@ document.addEventListener('click', (e) => {
   if (card && !(e.target.closest && e.target.closest('button'))) { e.stopPropagation(); e.preventDefault(); }
 }, true);
 
-// ---- Interactive swipe: only the CURRENT page is dragged under the finger.
-//      Too short a gesture -> it snaps back; far enough -> the old page slides
-//      out and the new category slides in. A single moving pane means the two
-//      pages can never end up stacked on top of each other. ----
+// ---- Interactive swipe (carousel): the outgoing and incoming pages sit side
+//      by side inside ONE moving rail that follows the finger. Too short a
+//      gesture -> it snaps back; far enough -> it completes. A single rail with
+//      two flex panes means the pages can never end up stacked on each other. ----
 const SWIPE_ROUTES = ['home', 'movies', 'explore', 'profile'];
 let _dg = null;        // active drag state (null when idle)
 let _dgBusy = false;   // a release animation is currently running
@@ -1813,39 +1813,59 @@ function _renderRouteInto(el, name) {
   const fn = routes[name] || routes['library'];
   try { fn(el, []); } catch {}
 }
+function _cleanClone(node) {
+  node.removeAttribute('id');
+  node.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+  return node;
+}
+// Build the two-pane rail: clone of the current page + the freshly rendered
+// target page, laid out horizontally. The real #app is hidden meanwhile.
+function _dgBuildTrack(dg) {
+  const app = document.getElementById('app');
+  const sy = window.scrollY; dg.sy = sy;
+  const outClone = _cleanClone(app.cloneNode(true));
+  outClone.style.transform = `translateY(${-sy}px)`;   // keep the current scroll position
+  _renderRouteInto(app, dg.target);                    // paint the incoming page into (still visible) #app
+  const inClone = _cleanClone(app.cloneNode(true));
+  inClone.style.transform = 'translateY(0)';
+  app.style.visibility = 'hidden';                     // hide the real page during the gesture
+  const track = document.createElement('div');
+  track.className = 'swipe-track';
+  const pOut = document.createElement('div'); pOut.className = 'swipe-pane'; pOut.appendChild(outClone);
+  const pIn = document.createElement('div'); pIn.className = 'swipe-pane'; pIn.appendChild(inClone);
+  if (dg.dir > 0) { track.appendChild(pOut); track.appendChild(pIn); dg.base = 0; }        // next: [out|in]
+  else { track.appendChild(pIn); track.appendChild(pOut); dg.base = -dg.W; }               // prev: [in|out]
+  track.style.transform = `translateX(${dg.base}px)`;
+  document.body.appendChild(track);
+  dg.track = track;
+}
 function _dgRelease(dg, dx) {
-  const el = document.getElementById('app');
-  const W = dg.W, dir = dg.dir, dur = 220;
+  const W = dg.W, dir = dg.dir, dur = 240, app = document.getElementById('app');
   const threshold = Math.max(60, W * 0.28);
-  const commit = dg.hasNext && Math.abs(dx) >= threshold && ((dir > 0 && dx < 0) || (dir < 0 && dx > 0));
-  el.style.transition = `transform ${dur}ms ease`;
-  requestAnimationFrame(() => {
-    el.style.transform = commit ? `translateX(${dir > 0 ? -W : W}px)` : 'translateX(0)';
-  });
+  const commit = dg.track && Math.abs(dx) >= threshold && ((dir > 0 && dx < 0) || (dir < 0 && dx > 0));
+  if (!dg.track) { // edge (first/last category): rubber-band #app back
+    app.style.transition = `transform ${dur}ms ease`;
+    requestAnimationFrame(() => { app.style.transform = 'translateX(0)'; });
+    setTimeout(() => { app.style.transition = ''; app.style.transform = ''; app.classList.remove('page-anim', 'page-drag'); _dgBusy = false; }, dur + 30);
+    return;
+  }
+  const track = dg.track;
+  const finalTx = commit ? (dir > 0 ? -W : 0) : dg.base;
+  track.style.transition = `transform ${dur}ms ease`;
+  requestAnimationFrame(() => { track.style.transform = `translateX(${finalTx}px)`; });
   setTimeout(() => {
     if (commit) {
-      // Old page has slid off. Paint the target and slide it in from the far side.
-      _lastTopRoute = dg.target;
-      _suppressRender = true;
-      backTarget = '#/' + dg.target;
-      location.hash = '#/' + dg.target;
-      _setActiveNav(dg.target);
-      el.style.transition = 'none';
-      _renderRouteInto(el, dg.target);
-      window.scrollTo(0, 0);
-      el.style.transform = `translateX(${dir > 0 ? W : -W}px)`;
-      requestAnimationFrame(() => {
-        el.style.transition = `transform ${dur}ms ease`;
-        el.style.transform = 'translateX(0)';
-      });
-      setTimeout(() => {
-        el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag');
-        _dgBusy = false;
-      }, dur + 30);
+      _suppressRender = true; _lastTopRoute = dg.target; backTarget = '#/' + dg.target;
+      location.hash = '#/' + dg.target; _setActiveNav(dg.target);
+      app.style.visibility = ''; app.style.transform = ''; app.style.transition = ''; app.classList.remove('page-anim', 'page-drag');
+      window.scrollTo(0, 0); // #app already holds the incoming page
     } else {
-      el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag');
-      _dgBusy = false;
+      _renderRouteInto(app, dg.fromName); // snap back -> restore the original page
+      app.style.visibility = ''; app.style.transform = ''; app.style.transition = ''; app.classList.remove('page-anim', 'page-drag');
+      window.scrollTo(0, dg.sy);
     }
+    track.remove();
+    _dgBusy = false;
   }, dur + 30);
 }
 document.addEventListener('touchstart', (e) => {
@@ -1871,14 +1891,15 @@ document.addEventListener('touchmove', (e) => {
     const j = SWIPE_ROUTES.indexOf(_dg.fromName) + _dg.dir;
     _dg.hasNext = j >= 0 && j < SWIPE_ROUTES.length;
     _dg.target = _dg.hasNext ? SWIPE_ROUTES[j] : null;
-    const el = document.getElementById('app');
-    el.classList.add('page-anim', 'page-drag');
-    el.style.transition = 'none';
+    if (_dg.hasNext) { _dgBuildTrack(_dg); }
+    else { const el = document.getElementById('app'); el.classList.add('page-anim', 'page-drag'); el.style.transition = 'none'; }
   }
   e.preventDefault(); // we own this horizontal gesture now
-  const el = document.getElementById('app');
-  const factor = _dg.hasNext ? 1 : 0.3; // rubber-band at the first/last category
-  el.style.transform = `translateX(${dx * factor}px)`;
+  if (_dg.track) {
+    _dg.track.style.transform = `translateX(${_dg.base + dx}px)`;
+  } else {
+    document.getElementById('app').style.transform = `translateX(${dx * 0.3}px)`; // edge rubber-band
+  }
 }, { passive: false });
 document.addEventListener('touchend', (e) => {
   if (!_dg || !_dg.locked) { _dg = null; return; }

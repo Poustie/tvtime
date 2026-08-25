@@ -81,9 +81,11 @@ main {
 }
 .loading { color: var(--muted); padding: 60px; text-align: center; }
 
-/* Interactive category swipe (a single moving pane) */
+/* Interactive category swipe (a single moving rail with two panes) */
 .page-anim { will-change: transform; }
 .page-drag { box-shadow: -18px 0 42px rgba(0,0,0,.55), 18px 0 42px rgba(0,0,0,.55); position: relative; z-index: 10; }
+.swipe-track { position: fixed; top: 0; left: 0; height: 100dvh; width: 200vw; z-index: 20; display: flex; background: var(--bg); will-change: transform; }
+.swipe-pane { flex: 0 0 100vw; width: 100vw; height: 100dvh; overflow: hidden; }
 .page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-head h1 { font-size: 24px; margin: 0; }
 .page-head .sub { color: var(--muted); font-size: 13px; }
