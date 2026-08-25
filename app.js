@@ -10,9 +10,12 @@ const DEFAULT_RUNTIME = 42; // minutes, fallback when unknown
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
-  { id: 10, date: '25 août 2026', title: 'Glissement fluide', items: [
-    'Le changement de catégorie est un vrai glissement continu : la page suivante arrive collée à la précédente, du bon côté, en suivant votre doigt.',
-    'La nouvelle page se dévoile pendant le geste (plus besoin d\'attendre que l\'ancienne disparaisse).',
+  { id: 11, date: '25 août 2026', title: 'Partager sa liste', items: [
+    'Partagez votre liste de séries et films à quelqu\'un, <b>sans votre historique</b> : rien n\'est marqué comme vu chez lui (Réglages → Partager ma liste).',
+    'À la réception, la liste reçue s\'ajoute à la sienne sans écraser ni dupliquer ce qu\'il a déjà.',
+  ] },
+  { id: 10, date: '25 août 2026', title: 'Glissement entre catégories', items: [
+    'Le changement de catégorie joue une petite animation de glissement.',
   ] },
   { id: 9, date: '25 août 2026', title: 'Navigation & confort', items: [
     'Changez de catégorie d\'un simple glissement (swipe) : Séries · Films · Explorer · Profil.',
@@ -826,32 +829,61 @@ function openMovie(name) {
 const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Profil', settings: 'Réglages', changelog: 'Notes de version' };
 function backLabel() { return BACK_LABELS[(backTarget || '').replace(/^#\//, '').split('/')[0]] || 'Retour'; }
 
-// Set by an interactive swipe when it already painted the target page itself.
+// Basic slide transition when moving from one main category to another.
 let _lastTopRoute = null;
-let _suppressRender = false;
+function _makeSnapshot() {
+  const el = document.getElementById('app');
+  const sy = window.scrollY;
+  const snap = el.cloneNode(true);
+  snap.removeAttribute('id');
+  snap.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+  snap.classList.add('page-snap');
+  snap.style.transform = `translate(0, ${-sy}px)`;
+  document.body.appendChild(snap);
+  return { snap, sy };
+}
+function _runSlide(el, snapObj, dir) {
+  const { snap, sy } = snapObj;
+  const from = dir > 0 ? '100%' : '-100%';   // new page enters from this side
+  const to = dir > 0 ? '-100%' : '100%';     // old page leaves to this side
+  const dur = 240;
+  el.classList.add('page-anim');
+  el.style.transition = 'none';
+  el.style.transform = `translateX(${from})`;
+  void el.offsetWidth;                        // flush the start position
+  el.style.transition = `transform ${dur}ms ease`;
+  el.style.transform = 'translateX(0)';
+  snap.style.transition = `transform ${dur}ms ease`;
+  snap.style.transform = `translate(${to}, ${-sy}px)`;
+  setTimeout(() => {
+    el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
+    snap.remove();
+  }, dur + 40);
+}
 async function render() {
-  if (_suppressRender) { _suppressRender = false; return; } // an interactive swipe already painted the page
-  // Safety: if a swipe rail is still up, rescue the live #app out of it, then drop the rail.
-  document.querySelectorAll('.swipe-track').forEach(t => {
-    const live = t.querySelector('#app');
-    if (live) document.body.appendChild(live);
-    t.remove();
-  });
-  _dg = null; _dgBusy = false;
+  document.querySelectorAll('.page-snap').forEach(n => n.remove()); // safety: never leave a frozen page behind
   const [name, ...rest] = currentRoute().split('/');
   if (name !== 'show' && name !== 'movie') backTarget = location.hash || '#/home';
   if (name !== 'show') lastShowKey = null; // re-opening a show counts as a fresh visit
   // Library / stats / lists / settings live under the "Profil" tab.
   const navName = ['library', 'stats', 'lists', 'settings', 'changelog'].includes(name) ? 'profile' : (name === 'preview' ? 'explore' : name);
   document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navName));
-  _lastTopRoute = SWIPE_ROUTES.includes(name) ? name : null;
+  // Direction of the slide, only between the four main categories.
+  const newTop = SWIPE_ROUTES.includes(name) ? name : null;
+  let dir = 0;
+  if (_lastTopRoute && newTop && _lastTopRoute !== newTop) {
+    dir = SWIPE_ROUTES.indexOf(newTop) > SWIPE_ROUTES.indexOf(_lastTopRoute) ? 1 : -1;
+  }
+  _lastTopRoute = newTop;
   const el = document.getElementById('app');
-  el.style.visibility = ''; el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim', 'page-drag'); // clear any leftover swipe state
+  el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
+  const snapObj = dir !== 0 ? _makeSnapshot() : null;
   const fn = routes[name] || routes['library'];
   el.innerHTML = '<div class="loading">Chargement…</div>';
   try { await fn(el, rest); } catch (e) { el.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`; }
   const saved = scrollByHash[location.hash];
   window.scrollTo(0, name !== 'show' && name !== 'movie' && saved ? saved : 0);
+  if (snapObj) _runSlide(el, snapObj, dir);
 }
 window.addEventListener('hashchange', render);
 
@@ -1809,117 +1841,30 @@ document.addEventListener('click', (e) => {
   if (card && !(e.target.closest && e.target.closest('button'))) { e.stopPropagation(); e.preventDefault(); }
 }, true);
 
-// ---- Interactive swipe (carousel): the outgoing and incoming pages sit side
-//      by side inside ONE moving rail that follows the finger. Too short a
-//      gesture -> it snaps back; far enough -> it completes. A single rail with
-//      two flex panes means the pages can never end up stacked on each other. ----
+// ---- Swipe left/right to move between the main categories (basic version:
+//      detected on release, the page change plays the standard slide). ----
 const SWIPE_ROUTES = ['home', 'movies', 'explore', 'profile'];
-let _dg = null;        // active drag state (null when idle)
-let _dgBusy = false;   // a release animation is currently running
-function _setActiveNav(name) {
-  document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === name));
-}
-function _renderRouteInto(el, name) {
-  const fn = routes[name] || routes['library'];
-  try { fn(el, []); } catch {}
-}
-function _cleanClone(node) {
-  node.removeAttribute('id');
-  node.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
-  return node;
-}
-// Build the two-pane rail: a clone of the current page + the REAL incoming page
-// (moved live into the rail so its posters keep loading during the gesture).
-function _dgBuildTrack(dg) {
-  const app = document.getElementById('app');
-  const sy = window.scrollY; dg.sy = sy;
-  const outClone = _cleanClone(app.cloneNode(true));
-  outClone.style.transform = `translateY(${-sy}px)`;   // keep the current scroll position
-  dg.appHome = { parent: app.parentNode, next: app.nextSibling };
-  _renderRouteInto(app, dg.target);                    // #app now shows the incoming page (live)
-  app.style.transform = ''; app.style.transition = ''; app.style.visibility = '';
-  const track = document.createElement('div');
-  track.className = 'swipe-track';
-  const pOut = document.createElement('div'); pOut.className = 'swipe-pane'; pOut.appendChild(outClone);
-  const pIn = document.createElement('div'); pIn.className = 'swipe-pane'; pIn.appendChild(app); // move the live page in
-  if (dg.dir > 0) { track.appendChild(pOut); track.appendChild(pIn); dg.base = 0; }        // next: [out|in]
-  else { track.appendChild(pIn); track.appendChild(pOut); dg.base = -dg.W; }               // prev: [in|out]
-  track.style.transform = `translateX(${dg.base}px)`;
-  document.body.appendChild(track);
-  dg.track = track;
-}
-function _dgRelease(dg, dx) {
-  const W = dg.W, dir = dg.dir, dur = 240, app = document.getElementById('app');
-  const threshold = Math.max(60, W * 0.28);
-  const commit = dg.track && Math.abs(dx) >= threshold && ((dir > 0 && dx < 0) || (dir < 0 && dx > 0));
-  if (!dg.track) { // edge (first/last category): rubber-band #app back
-    app.style.transition = `transform ${dur}ms ease`;
-    requestAnimationFrame(() => { app.style.transform = 'translateX(0)'; });
-    setTimeout(() => { app.style.transition = ''; app.style.transform = ''; app.classList.remove('page-anim', 'page-drag'); _dgBusy = false; }, dur + 30);
-    return;
-  }
-  const track = dg.track;
-  const finalTx = commit ? (dir > 0 ? -W : 0) : dg.base;
-  track.style.transition = `transform ${dur}ms ease`;
-  requestAnimationFrame(() => { track.style.transform = `translateX(${finalTx}px)`; });
-  setTimeout(() => {
-    if (!commit) _renderRouteInto(app, dg.fromName); // snap back -> restore the original page
-    app.style.transform = ''; app.style.transition = ''; app.style.visibility = ''; app.classList.remove('page-anim', 'page-drag');
-    dg.appHome.parent.insertBefore(app, dg.appHome.next); // move the live page back into the document
-    track.remove();
-    if (commit) {
-      _suppressRender = true; _lastTopRoute = dg.target; backTarget = '#/' + dg.target;
-      location.hash = '#/' + dg.target; _setActiveNav(dg.target);
-      window.scrollTo(0, 0);
-    } else {
-      window.scrollTo(0, dg.sy);
-    }
-    _dgBusy = false;
-  }, dur + 30);
-}
+let _swX = 0, _swY = 0, _swOn = false;
 document.addEventListener('touchstart', (e) => {
-  if (_dgBusy) { _dg = null; return; }
-  _dg = null;
+  _swOn = false;
   if (e.touches.length !== 1) return;
   const t = e.target;
   if (t.closest && t.closest('.cast-list, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
   if (document.getElementById('modalRoot') && document.getElementById('modalRoot').children.length) return;
-  const cur = currentRoute().split('/')[0];
-  if (!SWIPE_ROUTES.includes(cur)) return;
-  _dg = { fromName: cur, startX: e.touches[0].clientX, startY: e.touches[0].clientY, locked: false, dir: 0, hasNext: false, W: window.innerWidth };
+  if (!SWIPE_ROUTES.includes(currentRoute().split('/')[0])) return;
+  _swOn = true; _swX = e.touches[0].clientX; _swY = e.touches[0].clientY;
 }, { passive: true });
-document.addEventListener('touchmove', (e) => {
-  if (!_dg || _dgBusy) return;
-  const dx = e.touches[0].clientX - _dg.startX;
-  const dy = e.touches[0].clientY - _dg.startY;
-  if (!_dg.locked) {
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    if (Math.abs(dy) >= Math.abs(dx)) { _dg = null; return; } // vertical intent -> let it scroll / pull-to-refresh
-    _dg.locked = true;
-    _dg.dir = dx < 0 ? 1 : -1; // drag left = next category, drag right = previous
-    const j = SWIPE_ROUTES.indexOf(_dg.fromName) + _dg.dir;
-    _dg.hasNext = j >= 0 && j < SWIPE_ROUTES.length;
-    _dg.target = _dg.hasNext ? SWIPE_ROUTES[j] : null;
-    if (_dg.hasNext) { _dgBuildTrack(_dg); }
-    else { const el = document.getElementById('app'); el.classList.add('page-anim', 'page-drag'); el.style.transition = 'none'; }
-  }
-  e.preventDefault(); // we own this horizontal gesture now
-  if (_dg.track) {
-    _dg.track.style.transform = `translateX(${_dg.base + dx}px)`;
-  } else {
-    document.getElementById('app').style.transform = `translateX(${dx * 0.3}px)`; // edge rubber-band
-  }
-}, { passive: false });
 document.addEventListener('touchend', (e) => {
-  if (!_dg || !_dg.locked) { _dg = null; return; }
-  const dg = _dg; _dg = null;
-  const dx = (e.changedTouches[0] ? e.changedTouches[0].clientX : dg.startX) - dg.startX;
-  _dgBusy = true;
-  _dgRelease(dg, dx);
-}, { passive: true });
-document.addEventListener('touchcancel', () => {
-  if (_dg && _dg.locked) { const dg = _dg; _dg = null; _dgBusy = true; _dgRelease(dg, 0); }
-  else _dg = null;
+  if (!_swOn) return;
+  _swOn = false;
+  const dx = e.changedTouches[0].clientX - _swX;
+  const dy = e.changedTouches[0].clientY - _swY;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return; // require a clear horizontal swipe
+  let i = SWIPE_ROUTES.indexOf(currentRoute().split('/')[0]);
+  if (i < 0) return;
+  i += (dx < 0 ? 1 : -1); // swipe left = next category, swipe right = previous
+  if (i < 0 || i >= SWIPE_ROUTES.length) return; // no wrap-around at the ends
+  location.hash = '#/' + SWIPE_ROUTES[i];
 }, { passive: true });
 
 // progressively load posters for visible cards (only when a TMDB key is set)
@@ -2917,6 +2862,12 @@ route('settings', async (el) => {
     </div>
 
     <div class="panel">
+      <h3>Partager ma liste</h3>
+      <p class="hint" style="color:var(--muted)">Crée un fichier avec vos séries et films <b>sans l'historique</b> (rien n'est marqué comme vu). La personne qui le reçoit clique sur <b>« Importer »</b> ci-dessus : ses propres œuvres sont <b>conservées</b>, les vôtres viennent s'ajouter (sans doublon).</p>
+      <button class="btn" id="shareBtn">Partager ma liste (sans l'historique)</button>
+    </div>
+
+    <div class="panel">
       <h3>À propos</h3>
       <p class="hint" style="color:var(--muted)"><b>TV Time</b> · version ${APP_VERSION}<br>
       Données importées le ${esc((DATA.generatedAt || '').replace('T', ' '))}. Compte : ${esc(DATA.user?.mail || '')}.<br>
@@ -2934,6 +2885,7 @@ route('settings', async (el) => {
   };
   el.querySelector('#syncAll').onclick = () => syncEverything(el.querySelector('#syncProg'));
   el.querySelector('#exportBtn').onclick = exportData;
+  el.querySelector('#shareBtn').onclick = exportSharedList;
   el.querySelector('#importFile').onchange = importData;
 });
 
@@ -2993,6 +2945,59 @@ function exportData() {
   a.href = URL.createObjectURL(blob); a.download = 'tvtime-sauvegarde-' + new Date().toISOString().slice(0, 10) + '.json';
   a.click();
 }
+const _normName = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+// Export just the LIST of series & movies (no watch history at all), to share
+// with a friend. When imported, nothing is marked as seen.
+function exportSharedList() {
+  const shows = [];
+  for (const s of (DATA.shows || [])) shows.push({ tvdbId: s.tvdbId ?? null, name: s.name });
+  for (const cs of (userState.customShows || [])) shows.push({ tmdbId: cs.tmdbId ?? null, name: cs.name, poster: cs.poster || null });
+  const movies = [];
+  for (const m of (DATA.movies || [])) movies.push({ name: m.name, releaseDate: m.releaseDate || '', runtime: m.runtime || 0 });
+  for (const cm of (userState.customMovies || [])) movies.push({ name: cm.name, releaseDate: cm.releaseDate || '', runtime: cm.runtime || 0 });
+  const payload = { format: 'tvtime-sharedlist', exportedAt: new Date().toISOString(), shows, movies };
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'tvtime-liste-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  toast(`Liste exportée : ${shows.length} série(s), ${movies.length} film(s)`);
+}
+// Merge a shared list into MY data WITHOUT overwriting anything I already have,
+// and WITHOUT marking anything as seen.
+async function mergeSharedList(parsed) {
+  DATA.shows = Array.isArray(DATA.shows) ? DATA.shows : [];
+  DATA.movies = Array.isArray(DATA.movies) ? DATA.movies : [];
+  userState.customShows = userState.customShows || [];
+  userState.customMovies = userState.customMovies || [];
+  const haveTvdb = new Set(DATA.shows.map(s => String(s.tvdbId)));
+  const haveShowName = new Set(DATA.shows.map(s => _normName(s.name)).concat((userState.customShows).map(s => _normName(s.name))));
+  const haveMovie = new Set(DATA.movies.map(m => _normName(m.name)).concat((userState.customMovies).map(m => _normName(m.name))));
+  let addedShows = 0, addedMovies = 0;
+  const now = new Date().toISOString();
+  for (const s of (parsed.shows || [])) {
+    const nm = _normName(s.name);
+    if (!nm) continue;
+    if ((s.tvdbId != null && haveTvdb.has(String(s.tvdbId))) || haveShowName.has(nm)) continue;
+    if (s.tvdbId == null && s.tmdbId != null) {
+      userState.customShows.push({ key: 'tmdb:' + s.tmdbId, tmdbId: s.tmdbId, name: s.name, poster: s.poster || null, addedAt: now });
+    } else {
+      DATA.shows.push({ tvdbId: s.tvdbId ?? null, name: s.name, followed: true, nbEpisodesSeen: 0, showRating: null, favorited: false, archived: false, createdAt: now });
+      if (s.tvdbId != null) haveTvdb.add(String(s.tvdbId));
+    }
+    haveShowName.add(nm); addedShows++;
+  }
+  for (const m of (parsed.movies || [])) {
+    const nm = _normName(m.name);
+    if (!nm || haveMovie.has(nm)) continue;
+    userState.customMovies.push({ name: m.name, releaseDate: m.releaseDate || '', runtime: m.runtime || 0, status: 'towatch', addedAt: now });
+    haveMovie.add(nm); addedMovies++;
+  }
+  await persistDataOverride(DATA);
+  scheduleSaveState();
+  MODEL = null;
+  render();
+  toast(`Ajouté : ${addedShows} série(s), ${addedMovies} film(s)`);
+}
 // Replace the in-memory catalogue in place (DATA is a const reference).
 function applyDataObject(obj) {
   for (const k of Object.keys(DATA)) delete DATA[k];
@@ -3013,6 +3018,11 @@ function importData(ev) {
   r.onload = async () => {
     try {
       const parsed = JSON.parse(r.result);
+      if (parsed && parsed.format === 'tvtime-sharedlist') {
+        // Liste partagée par un ami : on fusionne sans rien écraser ni marquer vu.
+        await mergeSharedList(parsed);
+        return;
+      }
       const cat = parsed && parsed.data && (parsed.data.shows || parsed.data.seen) ? parsed.data : null;
       if (cat) {
         // Sauvegarde complète : restaure le catalogue (historique) durablement.
