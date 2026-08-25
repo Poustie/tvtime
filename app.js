@@ -10,6 +10,10 @@ const DEFAULT_RUNTIME = 42; // minutes, fallback when unknown
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 10, date: '25 août 2026', title: 'Glissement fluide', items: [
+    'Le changement de catégorie est un vrai glissement continu : la page suivante arrive collée à la précédente, du bon côté, en suivant votre doigt.',
+    'La nouvelle page se dévoile pendant le geste (plus besoin d\'attendre que l\'ancienne disparaisse).',
+  ] },
   { id: 9, date: '25 août 2026', title: 'Navigation & confort', items: [
     'Changez de catégorie d\'un simple glissement (swipe) : Séries · Films · Explorer · Profil.',
     'Le glissement suit votre doigt en direct : la page bouge avec vous, et revient en place si vous ne glissez pas assez.',
@@ -827,7 +831,13 @@ let _lastTopRoute = null;
 let _suppressRender = false;
 async function render() {
   if (_suppressRender) { _suppressRender = false; return; } // an interactive swipe already painted the page
-  document.querySelectorAll('.swipe-track').forEach(n => n.remove()); // safety: never leave a stray rail behind
+  // Safety: if a swipe rail is still up, rescue the live #app out of it, then drop the rail.
+  document.querySelectorAll('.swipe-track').forEach(t => {
+    const live = t.querySelector('#app');
+    if (live) document.body.appendChild(live);
+    t.remove();
+  });
+  _dg = null; _dgBusy = false;
   const [name, ...rest] = currentRoute().split('/');
   if (name !== 'show' && name !== 'movie') backTarget = location.hash || '#/home';
   if (name !== 'show') lastShowKey = null; // re-opening a show counts as a fresh visit
@@ -1818,21 +1828,20 @@ function _cleanClone(node) {
   node.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
   return node;
 }
-// Build the two-pane rail: clone of the current page + the freshly rendered
-// target page, laid out horizontally. The real #app is hidden meanwhile.
+// Build the two-pane rail: a clone of the current page + the REAL incoming page
+// (moved live into the rail so its posters keep loading during the gesture).
 function _dgBuildTrack(dg) {
   const app = document.getElementById('app');
   const sy = window.scrollY; dg.sy = sy;
   const outClone = _cleanClone(app.cloneNode(true));
   outClone.style.transform = `translateY(${-sy}px)`;   // keep the current scroll position
-  _renderRouteInto(app, dg.target);                    // paint the incoming page into (still visible) #app
-  const inClone = _cleanClone(app.cloneNode(true));
-  inClone.style.transform = 'translateY(0)';
-  app.style.visibility = 'hidden';                     // hide the real page during the gesture
+  dg.appHome = { parent: app.parentNode, next: app.nextSibling };
+  _renderRouteInto(app, dg.target);                    // #app now shows the incoming page (live)
+  app.style.transform = ''; app.style.transition = ''; app.style.visibility = '';
   const track = document.createElement('div');
   track.className = 'swipe-track';
   const pOut = document.createElement('div'); pOut.className = 'swipe-pane'; pOut.appendChild(outClone);
-  const pIn = document.createElement('div'); pIn.className = 'swipe-pane'; pIn.appendChild(inClone);
+  const pIn = document.createElement('div'); pIn.className = 'swipe-pane'; pIn.appendChild(app); // move the live page in
   if (dg.dir > 0) { track.appendChild(pOut); track.appendChild(pIn); dg.base = 0; }        // next: [out|in]
   else { track.appendChild(pIn); track.appendChild(pOut); dg.base = -dg.W; }               // prev: [in|out]
   track.style.transform = `translateX(${dg.base}px)`;
@@ -1854,17 +1863,17 @@ function _dgRelease(dg, dx) {
   track.style.transition = `transform ${dur}ms ease`;
   requestAnimationFrame(() => { track.style.transform = `translateX(${finalTx}px)`; });
   setTimeout(() => {
+    if (!commit) _renderRouteInto(app, dg.fromName); // snap back -> restore the original page
+    app.style.transform = ''; app.style.transition = ''; app.style.visibility = ''; app.classList.remove('page-anim', 'page-drag');
+    dg.appHome.parent.insertBefore(app, dg.appHome.next); // move the live page back into the document
+    track.remove();
     if (commit) {
       _suppressRender = true; _lastTopRoute = dg.target; backTarget = '#/' + dg.target;
       location.hash = '#/' + dg.target; _setActiveNav(dg.target);
-      app.style.visibility = ''; app.style.transform = ''; app.style.transition = ''; app.classList.remove('page-anim', 'page-drag');
-      window.scrollTo(0, 0); // #app already holds the incoming page
+      window.scrollTo(0, 0);
     } else {
-      _renderRouteInto(app, dg.fromName); // snap back -> restore the original page
-      app.style.visibility = ''; app.style.transform = ''; app.style.transition = ''; app.classList.remove('page-anim', 'page-drag');
       window.scrollTo(0, dg.sy);
     }
-    track.remove();
     _dgBusy = false;
   }, dur + 30);
 }
