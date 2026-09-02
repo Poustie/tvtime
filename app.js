@@ -10,6 +10,9 @@ const DEFAULT_RUNTIME = 42; // minutes, fallback when unknown
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 12, date: '2 septembre 2026', title: 'Correction « Terminée »', items: [
+    'Une série dont vous avez vu tous les épisodes passe maintenant bien dans « Terminée » — même si elle était épinglée « En cours » ou encore en diffusion.',
+  ] },
   { id: 11, date: '25 août 2026', title: 'Partager sa liste', items: [
     'Partagez votre liste de séries et films à quelqu\'un, <b>sans votre historique</b> : rien n\'est marqué comme vu chez lui (Réglages → Partager ma liste).',
     'À la réception, la liste s\'ajoute à la sienne <b>sans doublon</b> (même s\'il a déjà vu l\'œuvre) et <b>sans écraser</b> ce qu\'il a déjà.',
@@ -1256,7 +1259,8 @@ async function renderSeriesAvoir(el, shows) {
     const newSinceSeen = m && m.lastAir && daysSince(m.lastAir) <= NEW_EPISODE_DAYS
       && !done && (isNaN(lastSeenT) || lastAirT > lastSeenT);
     const pinned = isPinnedWatching(s);
-    if (done && !newEp && !pinned) { finished.push(s); continue; }
+    // Tout vu = Terminée : une série épinglée ou avec un épisode récent déjà vu ne reste pas « En cours ».
+    if (done) { finished.push(s); continue; }
     if (pinned || newEp || newSinceSeen || daysSince(s.lastSeenAt) <= ACTIVE_DAYS) watching.push(s);
     else if (s.followed) stale.push(s);
   }
