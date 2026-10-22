@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 31, date: '22 octobre 2026', title: 'Films en double & import plus sûr', items: [
+    'Les films que vous avez rajoutés à la main alors qu\'ils étaient déjà dans votre historique (ex. Hunger Games en français et en anglais) sont fusionnés automatiquement : vu, revisionnages, note, réaction et favori sont conservés.',
+    'Importer un fichier qui ne contient pas d\'historique (par exemple une liste partagée) n\'efface plus votre historique.',
+    'La recherche de films trouve maintenant aussi les titres français (ex. « Âge de glace » trouve Ice Age), et ajouter un film déjà dans votre bibliothèque ouvre sa fiche au lieu de créer un doublon.',
+  ] },
   { id: 30, date: '6 octobre 2026', title: 'Glissement qui suit le doigt', items: [
     'Entre les catégories (Séries, Films, Explorer, Profil) et entre les épisodes, la page suit maintenant votre doigt : on voit la page suivante arriver pendant le geste. Relâchez avant la moitié et la page revient ; un geste rapide suffit pour passer.',
   ] },
@@ -1359,9 +1364,10 @@ function openAddCatalog(kind) {
     kind,
     initial: '',
     onPick: async (hit) => {
-      if (kind === 'tv') addCustomShow(hit); else addCustomMovie(hit);
       closeModal();
-      location.hash = kind === 'tv' ? '#/home' : '#/movies';
+      if (kind !== 'tv') { openMovie(addCustomMovie(hit)); return; }
+      addCustomShow(hit);
+      location.hash = '#/home';
       render();
     },
   });
@@ -1382,15 +1388,19 @@ function removeCustomShow(key) {
   const i = userState.customShows.findIndex(c => keyOf(c) === key);
   if (i >= 0) { userState.customShows.splice(i, 1); scheduleSaveState(); }
 }
+// Returns the name of the movie in the library (the existing one if it was already there).
 function addCustomMovie(hit) {
   if (!userState.customMovies) userState.customMovies = [];
   const name = hit.title || hit.name || '';
-  const exists = (DATA.movies || []).some(m => m.name === name) || userState.customMovies.some(m => m.name === name);
-  if (exists) { toast('Film déjà présent'); return; }
+  const all = (DATA.movies || []).concat(userState.customMovies);
+  const idOf = (n) => { const r = (userState.movieTmdb && userState.movieTmdb[n]) || (tmdbCache.movies && tmdbCache.movies[n]); return r && r.id; };
+  const same = all.find(m => (hit.id != null && idOf(m.name) === hit.id) || _normName(m.name) === _normName(name));
+  if (same) { toast(`Déjà dans votre bibliothèque : ${movieDisplayName(same)}`); return same.name; }
   userState.customMovies.push({ name, releaseDate: hit.release_date || '', runtime: null, status: 'towatch', custom: true, addedAt: new Date().toISOString() });
   setMovieTmdb(name, hit); // stores poster + id
   scheduleSaveState();
   toast('Film ajouté à « À voir »');
+  return name;
 }
 function removeCustomMovie(name) {
   if (!userState.customMovies) return;
@@ -1431,7 +1441,7 @@ function openUnifiedSearch(kind) {
 
     const localMatches = (t) => {
       if (kind === 'tv') return ownedShows.filter(s => searchNames(s).some(n => n.includes(t))).slice(0, 12);
-      return ownedMovies.filter(m => (m.name || '').toLowerCase().includes(t)).slice(0, 12);
+      return ownedMovies.filter(m => _normName((m.name || '') + ' ' + movieDisplayName(m)).includes(_normName(t))).slice(0, 12);
     };
 
     let hits = [];
@@ -1448,7 +1458,7 @@ function openUnifiedSearch(kind) {
             return hitCard(poster, displayName(it), '', `data-local-key="${esc(it.key)}"`);
           }
           const rec = (tmdbCache.movies || {})[it.name];
-          return hitCard(rec && rec.poster, it.name, movieYear(it), `data-local-movie="${esc(it.name)}"`);
+          return hitCard(rec && rec.poster, movieDisplayName(it), movieYear(it), `data-local-movie="${esc(it.name)}"`);
         }).join('') + `</div>`;
       }
       html += `<div class="ps-section">Ajouter une nouvelle œuvre</div>`;
@@ -1475,10 +1485,9 @@ function openUnifiedSearch(kind) {
         ).join('') + `</div>`;
         box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
           const h = hits[parseInt(b.getAttribute('data-add'), 10)];
-          if (kind === 'tv') addCustomShow(h); else addCustomMovie(h);
           closeModal();
-          location.hash = kind === 'tv' ? '#/home' : '#/movies';
-          render();
+          if (kind === 'tv') { addCustomShow(h); location.hash = '#/home'; render(); return; }
+          openMovie(addCustomMovie(h));
         });
       } catch { const box = results.querySelector('#uTmdb'); if (box) box.innerHTML = `<div class="empty">Erreur de recherche.</div>`; }
     };
@@ -3399,7 +3408,7 @@ route('preview', async (el, rest) => {
         ${trailerHtml(meta.trailer)}`;
       wireTrailer(pv);
       renderAppreciation(pv.querySelector('#apprSlot'), 'movie', id, meta);
-      pv.querySelector('#pvAdd').onclick = () => { addCustomMovie({ id, title: meta.title, release_date: meta.release, poster_path: meta.poster }); openMovie(meta.title); };
+      pv.querySelector('#pvAdd').onclick = () => { openMovie(addCustomMovie({ id, title: meta.title, release_date: meta.release, poster_path: meta.poster })); };
     }
   } catch { pv.innerHTML = `<div class="empty"><div class="big">⚠️</div>Impossible de charger l'aperçu.</div>`; }
 });
@@ -4053,6 +4062,48 @@ async function mergeSharedList(parsed) {
   toast(`Ajouté : ${addedShows} série(s), ${addedMovies} film(s)`);
 }
 // Replace the in-memory catalogue in place (DATA is a const reference).
+// Films added by hand that are in fact a film of the history (same TMDB id, or same
+// title in either language): move their info onto the history film and drop the copy.
+function reconcileDuplicateMovies() {
+  const cm = userState.customMovies || [];
+  if (!cm.length || !(DATA.movies || []).length) return 0;
+  const idOf = (name) => { const r = (userState.movieTmdb && userState.movieTmdb[name]) || (tmdbCache.movies && tmdbCache.movies[name]); return r && r.id != null ? String(r.id) : null; };
+  const byId = new Map(), byName = new Map();
+  for (const d of DATA.movies) {
+    const id = idOf(d.name); if (id) byId.set(id, d);
+    byName.set(_normName(d.name), d);
+    const fr = tmdbCache.movies && tmdbCache.movies[d.name] && tmdbCache.movies[d.name].title;
+    if (fr && !byName.has(_normName(fr))) byName.set(_normName(fr), d);
+  }
+  const bag = (k) => (userState[k] = userState[k] || {});
+  let merged = 0;
+  for (const c of cm.slice()) {
+    const cid = idOf(c.name);
+    const d = (cid && byId.get(cid)) || byName.get(_normName(c.name));
+    if (!d || d.name === c.name) continue;
+    const did = idOf(d.name);
+    if (cid && did && cid !== did) continue; // same title, different film (remake…)
+    const cn = c.name, dn = d.name;
+    if (movieStatus(c) === 'watched') {
+      bag('movieStatus')[dn] = 'watched';
+      const cw = userState.movieWatchedAt && userState.movieWatchedAt[cn], dw = movieWatchedOf(d);
+      if (cw && (!dw || cw < dw)) bag('movieWatchedAt')[dn] = cw;
+    }
+    const rw = Math.max(movieRewatchOf(d), movieRewatchOf(c));
+    if (rw > movieRewatchOf(d)) bag('movieRewatch')[dn] = rw;
+    if (userState.movieRatings && userState.movieRatings[cn] && !movieRatingOf(d)) bag('movieRatings')[dn] = userState.movieRatings[cn];
+    if (userState.movieEmotions && userState.movieEmotions[cn] && !userState.movieEmotions[dn]) bag('movieEmotions')[dn] = userState.movieEmotions[cn];
+    if (isFavMovie(c)) bag('favMovies')[dn] = true;
+    if (userState.movieProgress && userState.movieProgress[cn] && !userState.movieProgress[dn]) bag('movieProgress')[dn] = userState.movieProgress[cn];
+    if (userState.movieTmdb && userState.movieTmdb[cn] && !idOf(dn)) bag('movieTmdb')[dn] = userState.movieTmdb[cn];
+    for (const l of userState.userLists || []) if (l.movies && l.movies.includes(cn)) l.movies = [...new Set(l.movies.map(x => x === cn ? dn : x))];
+    for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb']) if (userState[k]) delete userState[k][cn];
+    cm.splice(cm.indexOf(c), 1);
+    merged++;
+  }
+  if (merged) { scheduleSaveState(); MODEL = null; }
+  return merged;
+}
 function applyDataObject(obj) {
   for (const k of Object.keys(DATA)) delete DATA[k];
   Object.assign(DATA, obj);
@@ -4079,13 +4130,15 @@ function importData(ev) {
       }
       const cat = parsed && parsed.data && (parsed.data.shows || parsed.data.seen) ? parsed.data : null;
       if (cat) {
-        // Sauvegarde complète : restaure le catalogue (historique) durablement.
-        applyDataObject(cat);
-        await persistDataOverride(cat);
+        // Sauvegarde complète : restaure le catalogue (historique) durablement — sauf si le
+        // fichier en contient beaucoup moins que l'app (ex. une simple liste) : on garde le nôtre.
+        const poorer = (cat.seen || []).length < (DATA.seen || []).length / 2 || (cat.movies || []).length < (DATA.movies || []).length / 2;
+        if (!poorer) { applyDataObject(cat); await persistDataOverride(cat); }
         if (parsed.userState && typeof parsed.userState === 'object') userState = Object.assign(userState, parsed.userState);
+        const merged = reconcileDuplicateMovies();
         scheduleSaveState();
         MODEL = null;
-        toast('Sauvegarde complète restaurée');
+        toast((poorer ? 'Réglages importés — votre historique, plus complet, a été conservé' : 'Sauvegarde complète restaurée') + (merged ? ` · ${merged} film(s) en double fusionné(s)` : ''));
         render();
       } else {
         // Ancien format : uniquement les éditions utilisateur.
@@ -4187,6 +4240,8 @@ function applyTheme() {
   } catch {}
 
   applyTmdbOverrides();
+  const mergedDup = reconcileDuplicateMovies();
+  if (mergedDup) setTimeout(() => toast(`${mergedDup} film(s) ajouté(s) à la main fusionné(s) avec votre historique`), 1500);
   updateSyncStatus();
   applyTheme();
   if (!location.hash) location.hash = '#/home';
