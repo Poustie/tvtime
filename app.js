@@ -4212,6 +4212,25 @@ function showModal(html, onReady) {
   if (onReady) onReady(root);
 }
 function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
+// Affiche en grand : clic sur l'affiche d'une fiche (série / film, y compris l'aperçu).
+function openPosterViewer(src) {
+  closePosterViewer();
+  const v = document.createElement('div');
+  v.className = 'poster-viewer';
+  v.innerHTML = `<img src="${src}" alt=""><button class="pv-close" aria-label="Fermer">✕</button>`;
+  v.onclick = closePosterViewer;
+  document.body.appendChild(v);
+}
+function closePosterViewer() { document.querySelectorAll('.poster-viewer').forEach(n => n.remove()); }
+document.addEventListener('click', (ev) => {
+  const img = ev.target.closest && ev.target.closest('.detail-hero .poster img');
+  if (!img) return;
+  ev.stopPropagation();
+  openPosterViewer(img.src.replace(/\/t\/p\/w\d+\//, '/t/p/w780/'));
+}, true);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePosterViewer(); });
+window.addEventListener('hashchange', closePosterViewer);
+
 
 // Pop-up « Nouveautés » : au premier lancement suivant une mise à jour, liste les
 // notes de version ajoutées depuis la dernière visite. Fermée = marquée comme vue.
