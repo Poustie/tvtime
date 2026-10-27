@@ -11,6 +11,9 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 33, date: '27 octobre 2026', title: 'Affiche en grand', items: [
+    'Sur la fiche d\'une série ou d\'un film (y compris l\'aperçu avant ajout), touchez l\'affiche pour la voir en grand. Touchez l\'écran, la croix ou Échap pour fermer.',
+  ] },
   { id: 32, date: '22 octobre 2026', title: 'Explorer : ajout plus simple', items: [
     'Après avoir ajouté un film ou une série avec le ＋ d\'une affiche, l\'affiche passe à « ✓ Dans ma liste » et l\'ouvrir mène directement à votre fiche (plus besoin de « Ajouter » une deuxième fois).',
     'Après « Ajouter » sur un aperçu, le bouton ← ramène à Explorer au lieu de l\'ancien aperçu. Les films de votre historique sont aussi mieux reconnus dans Explorer.',
