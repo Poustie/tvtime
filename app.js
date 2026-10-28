@@ -11,6 +11,9 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 35, date: '27 octobre 2026', title: 'Boutons des affiches plus sûrs', items: [
+    'Sur téléphone, les boutons d’une affiche (arrêter, épingler, marquer vu, revisionner, supprimer) n’apparaissent plus qu’après un appui long sur l’affiche, et ne se déclenchent plus par erreur en touchant un coin. Valable pour les séries et les films.',
+  ] },
   { id: 34, date: '27 octobre 2026', title: 'Glissement plus fiable', items: [
     'Le glissement entre les pages démarre maintenant de façon plus sûre et suit mieux le doigt dès les premiers millimètres (il pouvait parfois s\'interrompre ou sauter).',
     'Les pages voisines sont préparées dès que vous posez le doigt si elles ne sont pas déjà prêtes.',
@@ -2246,7 +2249,7 @@ function _lpCancel() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; 
 document.addEventListener('touchstart', (e) => {
   const t = e.target;
   if (t.closest && t.closest('button')) return;          // let action buttons work
-  const card = t.closest && t.closest('.show-card:not(.movie-card)');
+  const card = t.closest && t.closest('.show-card');
   if (!card) { clearCardActions(); return; }              // tap outside -> hide actions
   _lpFired = false;
   _lpCancel();

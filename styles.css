@@ -627,3 +627,12 @@ html.amoled .bottom-nav { background: rgba(0,0,0,.94); }
 
 /* Les zones qui défilent latéralement gardent leur propre geste horizontal */
 .cast-list, .exp-row, .sort-chips, .pv-seasons, .nav { touch-action: pan-x pan-y; }
+
+/* Tactile : les boutons d'action des affiches (⏹ 📌 ✓ 🔁 🗑 🔍) restent invisibles ET inertes
+   tant qu'on n'a pas fait un appui long sur l'affiche (sinon un tap près d'un coin les déclenche
+   sans qu'on les voie). Les pastilles « épinglé » / « ×2 » restent visibles mais ne réagissent pas. */
+@media (hover: none) {
+  .show-card:not(.show-actions) :is(.card-arch, .card-del, .find-poster, .card-pin:not(.on), .card-rw:not(.on)) { opacity: 0; }
+  .show-card:not(.show-actions) :is(.card-arch, .card-del, .find-poster, .card-pin, .card-rw) { pointer-events: none; }
+  .show-card.show-actions :is(.card-arch, .card-del, .find-poster, .card-pin, .card-rw) { opacity: 1; pointer-events: auto; }
+}
