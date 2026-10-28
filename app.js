@@ -11,6 +11,20 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 41, date: '29 octobre 2026', title: 'Connexion par mot de passe', items: [
+    'On se connecte maintenant avec son e-mail et un mot de passe, directement dans l’application : plus besoin d’attendre un e-mail, et ça marche aussi sur iPhone.',
+    'Nouveau compte : touchez « Créer un compte ». Déjà connecté avec un lien ? Choisissez un mot de passe dans Mon compte → « Choisir ou changer mon mot de passe ».',
+    'Le lien par e-mail reste disponible en secours (par exemple en cas d’oubli du mot de passe).',
+  ] },
+  { id: 40, date: '28 octobre 2026', title: 'Barre du bas et rotation', items: [
+    'Sur iPhone, la barre des onglets reste collée en bas de l’écran, même sur une page presque vide.',
+    'Téléphone tourné à l’horizontale : l’application affiche « Tournez votre téléphone » (l’iPhone ne permet pas à une app web de bloquer la rotation ; sur iPhone, vous pouvez la verrouiller depuis le Centre de contrôle).',
+    'Message plus clair quand trop d’e-mails de connexion ont été demandés.',
+  ] },
+  { id: 39, date: '28 octobre 2026', title: 'Connexion sur iPhone', items: [
+    'Sur iPhone, le lien reçu par e-mail ouvre Safari, qui ne partage pas la connexion avec l’app installée. Safari affiche maintenant un code à copier : collez-le dans l’app (Mon compte → Sauvegarde en ligne → « Le lien ne m’a pas connecté »).',
+    'Les liens copiés depuis Gmail ou Outlook sont mieux reconnus, et le message d’erreur explique quand un lien a déjà servi.',
+  ] },
   { id: 38, date: '28 octobre 2026', title: 'Nouvelle organisation', items: [
     'L’onglet Profil devient l’onglet Amis (fil d’activité, ajouter et retrouver vos amis).',
     'Votre compte (profil, pseudo, photo, connexion, sauvegarde en ligne, bibliothèque, statistiques, listes, réglages) s’ouvre en touchant votre avatar, en haut à droite des pages Séries, Films, Explorer et Amis.',
@@ -4054,6 +4068,8 @@ let sbSession = null; // { at, rt, exp, uid, email } — gardé hors de userStat
 try { sbSession = JSON.parse(localStorage.getItem(SB_SESSION_KEY) || 'null'); } catch {}
 let sbPendingEmail = null; // e-mail en attente de saisie du code
 let sbBusy = false;
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
 let sbProfile = null; // mon profil (communauté) : { pseudo, is_public, avatar, updated_at } — null = pas encore créé
 function sbStoreSession(s) {
   sbSession = s;
@@ -4074,10 +4090,48 @@ async function sbError(res) {
   try { const j = await res.json(); msg = j.msg || j.message || j.error_description || j.error || ''; } catch {}
   return new Error(msg || ('Erreur ' + res.status));
 }
+// Connexion par e-mail + mot de passe : aucun e-mail envoyé (exige « Confirm email » désactivé dans Supabase
+// pour la création de compte). Le lien par e-mail reste disponible en secours.
+async function sbSignInPassword(email, password) {
+  const res = await sbRequest('/auth/v1/token?grant_type=password', { method: 'POST', json: { email, password } });
+  if (res.status === 400 || res.status === 401) {
+    const err = await sbError(res);
+    if (/confirm/i.test(err.message)) throw new Error('Compte pas encore confirmé : dans Supabase, désactivez « Confirm email », ou connectez-vous par lien');
+    throw new Error('E-mail ou mot de passe incorrect. Compte créé avec un lien ? Connectez-vous par lien (ci-dessous), puis choisissez un mot de passe dans Mon compte.');
+  }
+  if (!res.ok) throw await sbError(res);
+  sbStoreSession(sbSessionFrom(await res.json()));
+}
+async function sbSignUp(email, password) {
+  const res = await sbRequest('/auth/v1/signup', { method: 'POST', json: { email, password } });
+  if (res.status === 422 || res.status === 400) {
+    const err = await sbError(res);
+    if (/already|registered|exists/i.test(err.message)) throw new Error('Un compte existe déjà avec cet e-mail : utilisez « Se connecter »');
+    if (/password/i.test(err.message)) throw new Error('Mot de passe trop faible : 6 caractères minimum');
+    throw err;
+  }
+  if (res.status === 429) throw new Error('Trop de demandes pour l\'instant : réessayez dans une heure');
+  if (!res.ok) throw await sbError(res);
+  const j = await res.json();
+  if (!j.access_token) throw new Error('Compte créé, mais Supabase demande une confirmation par e-mail : désactivez « Confirm email » dans Supabase (Authentication → Sign In / Providers → Email), puis connectez-vous');
+  sbStoreSession(sbSessionFrom(j));
+}
+async function sbSetPassword(password) {
+  const token = await sbToken();
+  if (!token) throw new Error('Non connecté');
+  const res = await sbRequest('/auth/v1/user', { method: 'PUT', token, json: { password } });
+  if (!res.ok) {
+    const err = await sbError(res);
+    if (/different|same/i.test(err.message)) throw new Error('C\'est déjà votre mot de passe');
+    if (/reauth|nonce/i.test(err.message)) throw new Error('Supabase exige une confirmation par e-mail pour changer le mot de passe (option « Secure password change » à désactiver)');
+    throw err;
+  }
+}
 // Envoie l'e-mail contenant le lien de connexion (revient sur cette même page de l'app).
 async function sbSendLink(email) {
   const back = encodeURIComponent(location.origin + location.pathname);
   const res = await sbRequest('/auth/v1/otp?redirect_to=' + back, { method: 'POST', json: { email, create_user: true } });
+  if (res.status === 429) throw new Error('Trop d\'e-mails envoyés pour l\'instant (limite du service gratuit, environ 2 par heure pour tout le monde). Réessayez dans une heure, une seule fois.');
   if (!res.ok) throw await sbError(res);
   sbPendingEmail = email;
 }
@@ -4090,9 +4144,21 @@ function sbSessionFromHash(params) {
 }
 // Lien collé à la main (iPhone : l'app installée n'a pas le même stockage que Safari). Accepte le lien
 // de l'e-mail tel quel (…/auth/v1/verify?token=…) ou l'adresse où il redirige (…#access_token=…).
+// Accepte aussi le « code de transfert » (TVT1:…) copié depuis Safari, et les liens enveloppés par
+// Gmail / Outlook (https://www.google.com/url?q=… encodé).
 async function sbSignInWithLink(text) {
-  const m = (text || '').match(/https?:\/\/\S+/);
-  if (!m) throw new Error('Collez le lien complet de l\'e-mail');
+  const raw = (text || '').trim();
+  const code = raw.match(/TVT1:([A-Za-z0-9_-]+)/);
+  if (code) {
+    const res = await sbRequest('/auth/v1/token?grant_type=refresh_token', { method: 'POST', json: { refresh_token: code[1] } });
+    if (!res.ok) throw new Error('Code expiré ou déjà utilisé : redemandez un lien');
+    sbStoreSession(sbSessionFrom(await res.json()));
+    return;
+  }
+  let t = raw;
+  for (let i = 0; i < 3; i++) { try { const d = decodeURIComponent(t); if (d === t) break; t = d; } catch { break; } }
+  const m = t.match(/https?:\/\/[^\s"'<>\/]+\/auth\/v1\/verify\?[^\s"'<>]+/) || t.match(/https?:\/\/[^\s"'<>]*#[^\s"'<>]*access_token=[^\s"'<>]+/) || t.match(/https?:\/\/[^\s"'<>]+/);
+  if (!m) throw new Error('Collez le lien complet de l\'e-mail, ou le code copié depuis Safari');
   let u; try { u = new URL(m[0].replace(/[)>\]"']+$/, '')); } catch { throw new Error('Lien non reconnu'); }
   const hs = new URLSearchParams(u.hash.replace(/^#/, ''));
   if (hs.get('access_token')) {
@@ -4102,7 +4168,7 @@ async function sbSignInWithLink(text) {
   const tokenHash = u.searchParams.get('token_hash') || u.searchParams.get('token');
   if (!tokenHash) throw new Error('Lien non reconnu');
   const res = await sbRequest('/auth/v1/verify', { method: 'POST', json: { type: u.searchParams.get('type') || 'magiclink', token_hash: tokenHash } });
-  if (!res.ok) throw await sbError(res);
+  if (!res.ok) throw new Error('Ce lien a déjà servi ou a expiré (un lien ne marche qu\'une fois) : redemandez un lien et ne le touchez pas, faites un appui long → Copier');
   sbStoreSession(sbSessionFrom(await res.json()));
 }
 // Retour depuis le lien de l'e-mail : la page s'ouvre avec le jeton dans l'adresse (#access_token=…).
@@ -4117,7 +4183,41 @@ async function sbSignInWithLink(text) {
   else if (params.get('error_description')) msg = 'Lien invalide ou expiré : demandez-en un nouveau';
   history.replaceState(null, '', location.pathname + location.search + '#/profile');
   if (msg) setTimeout(() => toast(msg), 1200);
+  if (s && s.uid && isIOS && !isStandalone()) setTimeout(sbShowHandoff, 1600);
 })();
+// iPhone : le lien de l'e-mail s'ouvre dans Safari, dont le stockage est séparé de l'app installée sur
+// l'écran d'accueil. On propose alors de copier un « code de transfert » à coller dans l'app.
+// Safari se déconnecte ensuite, pour ne jamais réutiliser le même jeton que l'app.
+function sbShowHandoff() {
+  if (!sbSession || !sbSession.rt) return;
+  const code = 'TVT1:' + sbSession.rt;
+  showModal(`
+    <h2 style="margin:0 0 6px">📱 Encore une étape</h2>
+    <p class="hint" style="color:var(--muted)">Vous êtes connecté dans <b>Safari</b>. Sur iPhone, l'app installée sur l'écran d'accueil ne partage pas cette connexion.</p>
+    <ol class="hint" style="padding-left:18px">
+      <li>Touchez « Copier le code ».</li>
+      <li>Ouvrez l'app TV Time depuis l'écran d'accueil.</li>
+      <li>Avatar en haut à droite → Sauvegarde en ligne → « Le lien ne m'a pas connecté » → collez le code → « Me connecter ».</li>
+    </ol>
+    <input class="input" id="sbHandoffCode" readonly value="${esc(code)}" style="width:100%;font-size:12px">
+    <p class="hint" id="sbHandoffMsg" style="color:var(--muted)"></p>
+    <div class="modal-actions" style="margin-top:12px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" data-close>J'utilise Safari</button>
+      <button class="btn primary" id="sbHandoffCopy">Copier le code</button>
+    </div>`, (root) => {
+    const btn = root.querySelector('#sbHandoffCopy');
+    const done = () => { sbStoreSession(null); closeModal(); toast('Code copié : ouvrez maintenant l\'app'); render(); };
+    btn.onclick = async () => {
+      if (btn.dataset.manual) { done(); return; }
+      try { await navigator.clipboard.writeText(code); done(); }
+      catch {
+        const inp = root.querySelector('#sbHandoffCode'); inp.focus(); inp.select();
+        root.querySelector('#sbHandoffMsg').textContent = 'Copiez le code ci-dessus à la main (appui long → Copier), puis touchez « J\'ai copié ».';
+        btn.textContent = 'J\'ai copié'; btn.dataset.manual = '1';
+      }
+    };
+  });
+}
 // Jeton valide (rafraîchi si besoin). Renvoie null si déconnecté ; lève une erreur si hors-ligne.
 async function sbToken() {
   if (!sbSession) return null;
@@ -4155,15 +4255,31 @@ function sbPanelHtml() {
         <button class="btn primary" id="sbSave">☁️ Sauvegarder maintenant</button>
         <button class="btn" id="sbRestore">Restaurer</button>
         <button class="btn ghost" id="sbLogout">Se déconnecter</button>
-      </div><span id="sbStatus" class="sub"></span>`;
+      </div><span id="sbStatus" class="sub"></span>
+      <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">🔑 Choisir ou changer mon mot de passe</summary>
+        <p class="hint" style="color:var(--muted)">Utile si vous vous êtes connecté avec un lien reçu par e-mail : ensuite, vous vous connecterez avec votre e-mail et ce mot de passe (6 caractères minimum).</p>
+        <input class="input" id="sbNewPw" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe">
+        <div class="row" style="margin-top:8px"><button class="btn" id="sbSetPw">Enregistrer le mot de passe</button> <span id="sbPwStatus" class="sub"></span></div>
+      </details>`;
   } else {
-    inner = `<p class="hint" style="color:var(--muted)">Gardez votre historique en sécurité sur Internet : une seule sauvegarde privée, remplacée à chaque fois (une fois par semaine automatiquement). Indiquez votre e-mail : vous recevrez un lien ; touchez-le pour vous connecter (pas de mot de passe).</p>
+    inner = `<p class="hint" style="color:var(--muted)">Connectez-vous pour garder votre historique en sécurité sur Internet (une seule sauvegarde privée, remplacée chaque semaine automatiquement) et pour retrouver vos amis.</p>
       <input class="input" id="sbEmail" type="email" autocomplete="email" placeholder="Votre e-mail" value="${esc(sbPendingEmail || '')}">
-      <div class="row" style="display:flex;gap:10px;margin-top:8px"><button class="btn primary" id="sbSend">Recevoir le lien</button></div>
-      <span id="sbStatus" class="sub">${sbPendingEmail ? '✉️ Lien envoyé : ouvrez l\'e-mail (regardez aussi les indésirables) et touchez « Sign in ».' : ''}</span>
-      <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">Le lien ne m'a pas connecté (iPhone…)</summary>
-        <p class="hint" style="color:var(--muted)">Dans l'e-mail, faites un appui long sur « Sign in », choisissez « Copier le lien », puis collez-le ici.</p>
-        <input class="input" id="sbLink" placeholder="Collez le lien ici">
+      <input class="input" id="sbPw" type="password" autocomplete="current-password" placeholder="Mot de passe (6 caractères minimum)" style="margin-top:8px">
+      <div class="row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn primary" id="sbLogin">Se connecter</button>
+        <button class="btn" id="sbSignup">Créer un compte</button>
+      </div>
+      <span id="sbStatus" class="sub"></span>
+      <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">Autre façon : recevoir un lien par e-mail</summary>
+        <p class="hint" style="color:var(--muted)">Pour un compte créé avant les mots de passe, ou en cas d'oubli : recevez un lien de connexion (au plus 2 e-mails par heure pour tout le monde), puis choisissez un mot de passe dans Mon compte.</p>
+        <div class="row" style="margin-top:8px"><button class="btn" id="sbSend">Recevoir le lien</button></div>
+        ${sbPendingEmail ? '<p class="hint" style="color:var(--muted)">✉️ Lien envoyé : ouvrez l\'e-mail (regardez aussi les indésirables) et touchez « Sign in ».</p>' : ''}
+      </details>
+      <details style="margin-top:8px"><summary class="hint" style="color:var(--muted);cursor:pointer">Le lien ne m'a pas connecté (iPhone…)</summary>
+        <p class="hint" style="color:var(--muted)">Deux possibilités :<br>
+          • Vous avez touché le lien et Safari s'est ouvert : Safari affiche un <b>code</b> à copier, collez-le ici.<br>
+          • Ou, dans l'e-mail, faites un <b>appui long</b> sur « Sign in » → « Copier le lien » (sans le toucher avant : un lien ne sert qu'une fois), puis collez-le ici.</p>
+        <input class="input" id="sbLink" placeholder="Collez le lien ou le code ici">
         <div class="row" style="margin-top:8px"><button class="btn" id="sbPaste">Me connecter avec ce lien</button></div>
       </details>`;
   }
@@ -4177,11 +4293,29 @@ function sbWirePanel(el) {
     try { await fn(); } catch (e) { say('❌ ' + (e && e.message ? e.message : 'Échec (êtes-vous en ligne ?)')); b.disabled = false; }
     sbBusy = false;
   }; };
+  const creds = () => {
+    const email = el.querySelector('#sbEmail').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('E-mail invalide');
+    const pw = el.querySelector('#sbPw').value;
+    if (pw.length < 6) throw new Error('Mot de passe : 6 caractères minimum');
+    return { email, pw };
+  };
+  on('#sbLogin', async () => { const { email, pw } = creds(); say('Connexion…'); await sbSignInPassword(email, pw); toast('Connecté'); render(); });
+  on('#sbSignup', async () => { const { email, pw } = creds(); say('Création du compte…'); await sbSignUp(email, pw); toast('Compte créé, vous êtes connecté'); render(); });
   on('#sbSend', async () => {
     const email = el.querySelector('#sbEmail').value.trim();
     if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('E-mail invalide');
     say('Envoi…'); await sbSendLink(email); render();
   });
+  const pwb = el.querySelector('#sbSetPw');
+  if (pwb) pwb.onclick = async () => {
+    const ps = el.querySelector('#sbPwStatus'), pw = el.querySelector('#sbNewPw').value;
+    if (pw.length < 6) { ps.textContent = '❌ 6 caractères minimum'; return; }
+    if (sbBusy) return; sbBusy = true; pwb.disabled = true; ps.textContent = '…';
+    try { await sbSetPassword(pw); ps.textContent = '✅ Mot de passe enregistré'; el.querySelector('#sbNewPw').value = ''; }
+    catch (e) { ps.textContent = '❌ ' + (e.message || 'Échec'); }
+    pwb.disabled = false; sbBusy = false;
+  };
   on('#sbPaste', async () => {
     say('Vérification…'); await sbSignInWithLink(el.querySelector('#sbLink').value); toast('Connecté'); render();
   });
