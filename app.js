@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 42, date: '29 octobre 2026', title: 'Demandes d’ami', items: [
+    'Ajouter quelqu’un envoie maintenant une demande d’ami : elle apparaît chez lui dans l’onglet Amis avec « Accepter » ou « Refuser », et une pastille sur l’onglet le prévient.',
+    'Une fois acceptée, vous êtes amis dans les deux sens et voyez chacun l’activité de l’autre. Vous pouvez annuler une demande envoyée, ou retirer un ami depuis sa fiche.',
+  ] },
   { id: 41, date: '29 octobre 2026', title: 'Connexion par mot de passe', items: [
     'On se connecte maintenant avec son e-mail et un mot de passe, directement dans l’application : plus besoin d’attendre un e-mail, et ça marche aussi sur iPhone.',
     'Nouveau compte : touchez « Créer un compte ». Déjà connecté avec un lien ? Choisissez un mot de passe dans Mon compte → « Choisir ou changer mon mot de passe ».',
@@ -4347,7 +4351,7 @@ async function sbApi(path, { method = 'GET', json, headers = {} } = {}) {
   if (!token) throw new Error('Non connecté');
   const res = await sbRequest('/rest/v1/' + path, { method, json, token, headers });
   if (!res.ok) {
-    if (res.status === 409) throw new Error(path.startsWith('profiles') ? 'Ce pseudo est déjà pris' : 'Déjà dans vos amis');
+    if (res.status === 409) throw new Error(path.startsWith('profiles') ? 'Ce pseudo est déjà pris' : 'Demande déjà envoyée');
     throw await sbError(res);
   }
   const t = await res.text();
@@ -4429,6 +4433,7 @@ async function sbPublishProfile(force, extra) {
 async function sbMaybePublish() {
   if (!sbSession) return;
   try { if (!sbProfile) await sbLoadProfile(); if (sbProfile && sbProfile.is_public) await sbPublishProfile(false); } catch {}
+  if (sbProfile) sbCheckFriendRequests();
 }
 // Photo de profil : recadrée au carré et réduite à 160 px (≈ 10 Ko) avant l'envoi.
 function avatarFromFile(file) {
@@ -4456,20 +4461,60 @@ function activityText(g) {
   if (g.k === 'm') return `a vu le film ${g.n}`;
   return g.c > 1 ? `a vu ${g.c} épisodes de ${g.n} (jusqu'à ${g.e})` : `a vu ${g.e} de ${g.n}`;
 }
+// Demandes d'ami : une ligne follows A→B = « A demande B en ami » ; A→B et B→A = amis.
+const isUuid = (id) => /^[0-9a-f-]{36}$/.test(id || '');
 async function sbLoadFriends() {
-  const f = await sbApi('follows?follower=eq.' + sbSession.uid + '&select=followed');
-  const ids = (f || []).map(r => r.followed).filter(id => /^[0-9a-f-]{36}$/.test(id));
-  if (!ids.length) return [];
-  return (await sbApi('profiles?id=in.(' + ids.join(',') + ')&select=id,pseudo,avatar,snapshot,updated_at')) || [];
+  const me = sbSession.uid;
+  const rows = (await sbApi('follows?or=(follower.eq.' + me + ',followed.eq.' + me + ')&select=follower,followed')) || [];
+  const out = new Set(rows.filter(r => r.follower === me).map(r => r.followed).filter(isUuid));
+  const inc = new Set(rows.filter(r => r.followed === me).map(r => r.follower).filter(isUuid));
+  const ids = Array.from(new Set([...out, ...inc]));
+  const profs = ids.length ? ((await sbApi('profiles?id=in.(' + ids.join(',') + ')&select=id,pseudo,avatar,snapshot,updated_at')) || []) : [];
+  const res = { friends: [], incoming: [], outgoing: [] };
+  for (const p of profs) {
+    if (out.has(p.id) && inc.has(p.id)) res.friends.push(p);
+    else if (inc.has(p.id)) res.incoming.push(p);
+    else res.outgoing.push(p);
+  }
+  for (const k of Object.keys(res)) res[k].sort((a, b) => a.pseudo.localeCompare(b.pseudo));
+  sbSetFriendBadge(res.incoming.length);
+  return res;
+}
+// Pastille sur l'onglet Amis = nombre de demandes reçues en attente.
+function sbSetFriendBadge(n) {
+  const a = document.querySelector('.bottom-nav a[data-route="friends"]'); if (!a) return;
+  let b = a.querySelector('.bn-badge');
+  if (!n) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement('span'); b.className = 'bn-badge'; a.appendChild(b); }
+  b.textContent = n > 9 ? '9+' : String(n);
+}
+async function sbCheckFriendRequests() {
+  if (!sbSession) return;
+  try {
+    const me = sbSession.uid;
+    const rows = (await sbApi('follows?or=(follower.eq.' + me + ',followed.eq.' + me + ')&select=follower,followed')) || [];
+    const mine = new Set(rows.filter(r => r.follower === me).map(r => r.followed));
+    sbSetFriendBadge(rows.filter(r => r.followed === me && !mine.has(r.follower)).length);
+  } catch {}
+}
+async function sbAcceptFriend(id) {
+  await sbApi('follows', { method: 'POST', json: { follower: sbSession.uid, followed: id }, headers: { Prefer: 'return=minimal' } });
+}
+// Supprime le lien dans les deux sens (refuser une demande, l'annuler, ou retirer un ami).
+async function sbRemoveFriend(id) {
+  const me = sbSession.uid, h = { Prefer: 'return=minimal' };
+  await sbApi('follows?follower=eq.' + me + '&followed=eq.' + id, { method: 'DELETE', headers: h });
+  await sbApi('follows?follower=eq.' + id + '&followed=eq.' + me, { method: 'DELETE', headers: h });
 }
 async function sbFollowByPseudo(pseudo) {
   if (!/^[A-Za-z0-9_.-]{3,20}$/.test(pseudo)) throw new Error('Pseudo invalide');
   const rows = await sbApi('profiles?pseudo=ilike.' + encodeURIComponent(pseudo.replace(/_/g, '\\_')) + '&select=id,pseudo');
   const hit = (rows || []).find(r => r.pseudo.toLowerCase() === pseudo.toLowerCase());
-  if (!hit) throw new Error('Aucun profil visible avec ce pseudo (il doit être rendu visible par son propriétaire)');
+  if (!hit) throw new Error('Aucun profil visible avec ce pseudo (son propriétaire doit cocher « Rendre mon profil visible » dans Mon compte)');
   if (hit.id === sbSession.uid) throw new Error('C\'est votre propre pseudo 🙂');
+  const back = (await sbApi('follows?follower=eq.' + hit.id + '&followed=eq.' + sbSession.uid + '&select=follower')) || [];
   await sbApi('follows', { method: 'POST', json: { follower: sbSession.uid, followed: hit.id }, headers: { Prefer: 'return=minimal' } });
-  return hit.pseudo;
+  return { pseudo: hit.pseudo, accepted: back.length > 0 };
 }
 
 // Bouton « Mon compte » (avatar) en haut à droite des 4 onglets : mène au profil, aux réglages et à la connexion.
@@ -4547,14 +4592,14 @@ async function fillAccountProfile(box) {
 route('friends', async (el) => {
   const head = `<div class="page-head"><h1>👥 Amis</h1>${acctBtn()}</div>`;
   if (!sbSession) {
-    el.innerHTML = `${head}<div class="empty"><div class="big">👥</div><p>Pour retrouver vos amis, connectez-vous d'abord avec votre e-mail (Mon compte).</p><a class="btn primary" href="#/profile">Me connecter</a></div>`;
+    el.innerHTML = `${head}<div class="empty"><div class="big">👥</div><p>Pour retrouver vos amis, connectez-vous d'abord (Mon compte).</p><a class="btn primary" href="#/profile">Me connecter</a></div>`;
     return;
   }
   el.innerHTML = `${head}<p class="hint" style="color:var(--muted)">Chargement…</p>`;
-  let friends = [];
+  let L = { friends: [], incoming: [], outgoing: [] };
   try {
     await sbLoadProfile();
-    if (sbProfile) { sbCacheAccount(); friends = await sbLoadFriends(); }
+    if (sbProfile) { sbCacheAccount(); L = await sbLoadFriends(); }
   } catch (e) {
     el.innerHTML = `${head}<div class="empty"><p>Impossible de joindre le serveur (${esc(e.message || 'hors-ligne')}). Réessayez avec Internet. Si le message parle d'une table introuvable, le script « supabase-communaute.sql » n'a pas encore été exécuté.</p></div>`;
     return;
@@ -4563,24 +4608,39 @@ route('friends', async (el) => {
     el.innerHTML = `${head}<div class="empty"><div class="big">👥</div><p>Créez d'abord votre profil (pseudo et photo) dans Mon compte.</p><a class="btn primary" href="#/profile">Créer mon profil</a></div>`;
     return;
   }
+  const { friends, incoming, outgoing } = L;
   const feed = [];
   for (const f of friends) for (const g of ((f.snapshot && f.snapshot.recent) || [])) feed.push({ f, g });
   feed.sort((a, b) => String(b.g.at).localeCompare(String(a.g.at)));
   const lastOf = (f) => { const g = f.snapshot && f.snapshot.recent && f.snapshot.recent[0]; return g ? `${activityText(g)} · ${fmtAgo(g.at)}` : (f.snapshot ? 'Rien de partagé pour l\'instant' : 'Profil pas encore publié'); };
+  const person = (f, actions, sub) => `<div class="friend-row">${avatarHtml(f.avatar, f.pseudo)}<span style="flex:1"><b>${esc(f.pseudo)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${actions}</div>`;
   el.innerHTML = `${head}
-    ${sbProfile.is_public ? '' : `<div class="panel"><p class="hint" style="color:var(--muted);margin:0">🔒 Votre profil est invisible : vos amis ne peuvent pas vous trouver. <a href="#/profile">Le rendre visible</a></p></div>`}
+    ${sbProfile.is_public ? '' : `<div class="panel"><p class="hint" style="color:var(--muted);margin:0">🔒 Votre profil est invisible : on ne peut pas vous trouver avec votre pseudo. <a href="#/profile">Le rendre visible</a></p></div>`}
+    ${incoming.length ? `<div class="panel fr-requests"><h3>📩 Demandes d'ami <span style="color:var(--muted);font-weight:400">· ${incoming.length}</span></h3>
+      ${incoming.map(f => person(f, `<button class="btn sm primary" data-accept="${esc(f.id)}">Accepter</button><button class="btn sm ghost" data-refuse="${esc(f.id)}">Refuser</button>`, 'veut être votre ami')).join('')}</div>` : ''}
     <div class="panel"><h3>Ajouter un ami</h3>
-      <div class="row" style="display:flex;gap:10px"><input class="input" id="frAdd" placeholder="Son pseudo" autocapitalize="off" autocomplete="off" style="flex:1"><button class="btn primary" id="frAddBtn">Suivre</button></div>
+      <div class="row" style="display:flex;gap:10px"><input class="input" id="frAdd" placeholder="Son pseudo" autocapitalize="off" autocomplete="off" style="flex:1"><button class="btn primary" id="frAddBtn">Envoyer</button></div>
       <span id="frAddStatus" class="sub"></span>
     </div>
     <div class="panel"><h3>Mes amis <span style="color:var(--muted);font-weight:400">· ${friends.length}</span></h3>
       ${friends.length ? friends.map(f => `<a class="friend-row" href="#/friend/${esc(f.id)}">${avatarHtml(f.avatar, f.pseudo)}<span><b>${esc(f.pseudo)}</b><small>${esc(lastOf(f))}</small></span></a>`).join('')
-        : '<p class="hint" style="color:var(--muted)">Personne pour l\'instant. Demandez son pseudo à un ami (il doit avoir rendu son profil visible).</p>'}
+        : '<p class="hint" style="color:var(--muted)">Personne pour l\'instant. Envoyez une demande avec le pseudo d\'un ami : vous serez amis quand il l\'aura acceptée.</p>'}
     </div>
+    ${outgoing.length ? `<div class="panel"><h3>⏳ Demandes envoyées</h3>
+      ${outgoing.map(f => person(f, `<button class="btn sm ghost" data-cancel="${esc(f.id)}">Annuler</button>`, 'en attente de réponse')).join('')}</div>` : ''}
     ${feed.length ? `<div class="panel"><h3>Activité des amis</h3>${feed.slice(0, 20).map(x => `<div class="feed-line"><b>${esc(x.f.pseudo)}</b> ${esc(activityText(x.g))} <span class="sub">· ${esc(fmtAgo(x.g.at))}</span></div>`).join('')}</div>` : ''}`;
+  const act = (sel, fn) => el.querySelectorAll(sel).forEach(btn => btn.onclick = async () => {
+    if (sbBusy) return; sbBusy = true; btn.disabled = true;
+    try { await fn(btn); sbBusy = false; render(); return; }
+    catch (e) { toast('Échec : ' + (e.message || '')); btn.disabled = false; }
+    sbBusy = false;
+  });
+  act('[data-accept]', async (b) => { await sbAcceptFriend(b.dataset.accept); toast('Vous êtes maintenant amis'); });
+  act('[data-refuse]', async (b) => { await sbRemoveFriend(b.dataset.refuse); toast('Demande refusée'); });
+  act('[data-cancel]', async (b) => { await sbRemoveFriend(b.dataset.cancel); toast('Demande annulée'); });
   el.querySelector('#frAddBtn').onclick = async (ev) => {
     const b = ev.currentTarget, add = el.querySelector('#frAddStatus'); if (sbBusy) return; sbBusy = true; b.disabled = true; add.textContent = '…';
-    try { const p = await sbFollowByPseudo(el.querySelector('#frAdd').value.trim()); toast('Vous suivez ' + p); sbBusy = false; render(); return; }
+    try { const r = await sbFollowByPseudo(el.querySelector('#frAdd').value.trim()); toast(r.accepted ? 'Vous êtes maintenant amis avec ' + r.pseudo : 'Demande envoyée à ' + r.pseudo); sbBusy = false; render(); return; }
     catch (e) { add.textContent = '❌ ' + (e.message || 'Échec'); b.disabled = false; }
     sbBusy = false;
   };
@@ -4612,11 +4672,11 @@ route('friend', async (el, rest) => {
     ${s.recent && s.recent.length ? `<div class="panel"><h3>🕒 Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
     ${row('❤️ Séries favorites', s.favShows)}
     ${row('🎬 Films favoris', s.favMovies)}
-    <p style="margin-top:14px"><button class="btn ghost sm" id="frUnfollow">Ne plus suivre ${esc(p.pseudo)}</button></p>`;
+    <p style="margin-top:14px"><button class="btn ghost sm" id="frUnfollow">Retirer ${esc(p.pseudo)} de mes amis</button></p>`;
   el.querySelector('#frUnfollow').onclick = async (ev) => {
-    if (!confirm('Ne plus suivre ' + p.pseudo + ' ?')) return;
+    if (!confirm('Retirer ' + p.pseudo + ' de vos amis ?')) return;
     ev.currentTarget.disabled = true;
-    try { await sbApi('follows?follower=eq.' + sbSession.uid + '&followed=eq.' + id, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }); location.hash = '#/friends'; }
+    try { await sbRemoveFriend(id); location.hash = '#/friends'; }
     catch (e) { toast('Échec : ' + (e.message || '')); ev.currentTarget.disabled = false; }
   };
 });

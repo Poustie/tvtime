@@ -671,3 +671,10 @@ html.amoled .bottom-nav { background: rgba(0,0,0,.94); }
   .rotate-lock .rl-sub { color: var(--muted); font-size: 13px; max-width: 360px; }
   html.amoled .rotate-lock { background: #000; }
 }
+
+/* Demandes d'ami : pastille sur l'onglet Amis, boutons dans la liste */
+.bottom-nav a { position: relative; }
+.bn-badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: #e5484d; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.friend-row .btn { flex: none; }
+.friend-row .btn + .btn { margin-left: 6px; }
