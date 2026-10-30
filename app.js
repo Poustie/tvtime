@@ -11,6 +11,9 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 46, date: '30 octobre 2026', title: 'Progression des amis', items: [
+    'Sur la fiche d’un ami, ses séries en cours affichent la même barre de progression que les vôtres sous l’affiche (orange en cours, bleu pour un revisionnage), au lieu du nombre d’épisodes.',
+  ] },
   { id: 45, date: '30 octobre 2026', title: 'Corriger un revisionnage', items: [
     'Après chaque « 🔁 +1 visionnage », un message propose « Annuler » pendant quelques secondes.',
     'Fiche d’un épisode ou d’un film : un bouton « −1 » permet de retirer un visionnage en trop.',
@@ -4801,11 +4804,19 @@ route('friend', async (el, rest) => {
   catch (e) { el.innerHTML = `${back}<div class="empty"><p>Impossible de charger (${esc(e.message || 'hors-ligne')}).</p></div>`; return; }
   if (!p) { el.innerHTML = `${back}<div class="empty">Ce profil n'est plus visible.</div>`; return; }
   const s = p.snapshot || {};
-  const tile = (it, extra) => {
+  const tile = (it, bar) => {
     const po = safePoster(it.p);
-    return `<div class="fr-item">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : `<div class="fr-noimg">${esc(it.n)}</div>`}<small>${esc(it.n)}</small>${extra || ''}</div>`;
+    return `<div class="fr-item"><div class="fr-poster">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : `<div class="fr-noimg">${esc(it.n)}</div>`}${bar || ''}</div><small>${esc(it.n)}</small></div>`;
   };
-  const row = (title, items, extra) => items && items.length ? `<div class="panel"><h3>${title}</h3><div class="fr-grid">${items.map(it => tile(it, extra ? extra(it) : '')).join('')}</div></div>` : '';
+  const row = (title, items, barOf) => items && items.length ? `<div class="panel"><h3>${title}</h3><div class="fr-grid">${items.map(it => tile(it, barOf ? barOf(it) : '')).join('')}</div></div>` : '';
+  // Même barre que sous nos propres affiches : orange = en cours, bleu sur fond vert = revisionnage.
+  const friendBar = (it) => {
+    const d = +it.d || 0, t = +it.t || 0;
+    if (!t || d <= 0) return '';
+    const pct = Math.max(4, Math.min(it.r ? 99 : 100, Math.round(d / t * 100)));
+    const prog = it.r ? { pct, cls: 'rw', base: 'green' } : (d >= t ? { pct: 100, cls: 'green' } : { pct: Math.min(99, pct), cls: 'orange' });
+    return `<div class="card-progress">${progressBarHtml(prog)}</div>`;
+  };
   const st = s.stats || {};
   el.innerHTML = `${back}
     <div class="page-head" style="display:flex;align-items:center;gap:14px">${avatarHtml(p.avatar, p.pseudo, 'lg')}<div><h1 style="margin:0">${esc(p.pseudo)}</h1><span class="sub">Mis à jour ${esc(fmtAgo(p.updated_at))}</span></div></div>
@@ -4813,7 +4824,7 @@ route('friend', async (el, rest) => {
       <div class="stat-card"><div class="k">Épisodes vus</div><div class="v">${esc(st.eps)}</div></div>
       <div class="stat-card"><div class="k">Séries commencées</div><div class="v">${esc(st.shows)}</div></div>
       <div class="stat-card"><div class="k">Films vus</div><div class="v">${esc(st.movies)}</div></div></div>` : '<p class="hint" style="color:var(--muted)">Rien n\'a encore été publié.</p>'}
-    ${row('▶️ En cours', s.watching, (it) => it.t ? `<small class="sub">${it.r ? '🔁 ' : ''}${esc(it.d)}/${esc(it.t)} ép.</small>` : (it.r ? '<small class="sub">🔁 revisionnage</small>' : ''))}
+    ${row('▶️ En cours', s.watching, friendBar)}
     ${s.recent && s.recent.length ? `<div class="panel"><h3>🕒 Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
     ${row('❤️ Séries favorites', s.favShows)}
     ${row('🎬 Films favoris', s.favMovies)}

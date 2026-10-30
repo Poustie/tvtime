@@ -652,7 +652,8 @@ html.amoled .bottom-nav { background: rgba(0,0,0,.94); }
 .feed-line:last-child { border-bottom: 0; }
 .fr-grid { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; touch-action: pan-x pan-y; }
 .fr-item { width: 96px; flex: none; }
-.fr-item img, .fr-noimg { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; background: var(--bg3); display: block; }
+.fr-poster { position: relative; border-radius: 8px; overflow: hidden; background: var(--bg3); }
+.fr-item img, .fr-noimg { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; background: var(--bg3); display: block; }
 .fr-noimg { display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; padding: 6px; color: var(--muted); }
 .fr-item small { display: block; font-size: 12px; margin-top: 4px; line-height: 1.2; }
 
