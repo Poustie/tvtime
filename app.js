@@ -11,6 +11,21 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 45, date: '30 octobre 2026', title: 'Corriger un revisionnage', items: [
+    'Après chaque « 🔁 +1 visionnage », un message propose « Annuler » pendant quelques secondes.',
+    'Fiche d’un épisode ou d’un film : un bouton « −1 » permet de retirer un visionnage en trop.',
+    'Dans la liste des épisodes et sur les affiches de films : appui long sur 🔁 pour ouvrir une petite fenêtre − / + et corriger le nombre de visionnages.',
+  ] },
+  { id: 44, date: '30 octobre 2026', title: 'Dates de revisionnage', items: [
+    'Chaque « +1 visionnage » enregistre maintenant sa date, pour les épisodes comme pour les films.',
+    'Fiche d’un épisode ou d’un film → « Mon visionnage » : vu le…, revu le…. Fiche d’une série → « Revisionnages » : l’historique jour par jour (épisodes revus ce jour-là).',
+    'Les revisionnages faits avant cette mise à jour n’ont pas de date : ils apparaissent comme « sans date ».',
+  ] },
+  { id: 43, date: '30 octobre 2026', title: 'Profil et sauvegarde', items: [
+    'Les séries « en cours » visibles par vos amis sont maintenant exactement celles de votre page Séries → En cours : revisionnages (ex. une série déjà finie que vous revoyez), séries épinglées et séries avec un nouvel épisode comprises. Un 🔁 signale un revisionnage.',
+    'Une fois connecté, votre sauvegarde en ligne se fait automatiquement une fois par jour, sans rien afficher.',
+    'Règle « En cours » revue : une série y reste 3 mois après votre dernier épisode vu, pour toujours si elle est épinglée, 3 mois après le dernier épisode revu pendant un revisionnage, et 1 mois maximum après la sortie d’un nouvel épisode que vous n’avez pas encore regardé. Ensuite, elle passe dans « Pas vu depuis longtemps ».',
+  ] },
   { id: 42, date: '29 octobre 2026', title: 'Demandes d’ami', items: [
     'Ajouter quelqu’un envoie maintenant une demande d’ami : elle apparaît chez lui dans l’onglet Amis avec « Accepter » ou « Refuser », et une pastille sur l’onglet le prévient.',
     'Une fois acceptée, vous êtes amis dans les deux sens et voyez chacun l’activité de l’autre. Vous pouvez annuler une demande envoyée, ou retirer un ami depuis sa fiche.',
@@ -236,6 +251,8 @@ let userState = {
   pinnedWatching: {}, // showKey -> true : force the show into « En cours » regardless of last-seen date
   rewatching: {}, // showKey -> true : nouveau visionnage en cours d'une série terminée
   rewatchAt: {}, // epKey -> timestamp du dernier « +1 visionnage » (appartenance au revisionnage en cours)
+  rewatchDates: {}, // epKey -> [dates « AAAA-MM-JJ HH:MM:SS » de chaque revisionnage]
+  movieRewatchDates: {}, // movieName -> [dates de chaque revisionnage]
   rewatchActivity: {}, // showKey -> date "YYYY-MM-DD HH:MM:SS" du dernier revisionnage (tri « En cours »)
   lastBackupAt: null, // date ISO de la dernière sauvegarde exportée
   weeklyBackup: true, // proposer une sauvegarde chaque semaine (mode téléphone)
@@ -341,6 +358,39 @@ function toast(msg) {
   if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
   t.textContent = msg; requestAnimationFrame(() => t.classList.add('show'));
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1800);
+}
+// Message avec un bouton « Annuler » (ex. après un « +1 visionnage » fait par erreur).
+function toastUndo(msg, undo) {
+  let t = document.querySelector('.toast');
+  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+  t.innerHTML = `<span>${esc(msg)}</span><button type="button" class="toast-undo">Annuler</button>`;
+  t.querySelector('.toast-undo').onclick = () => { clearTimeout(t._h); t.classList.remove('show'); undo(); };
+  requestAnimationFrame(() => t.classList.add('show'));
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 4500);
+}
+// Appui long (ou clic droit) sur un élément. Le clic qui suit un appui long est ignoré.
+function onLongPress(el, fn) {
+  let timer = null, fired = false;
+  const start = () => { fired = false; clearTimeout(timer); timer = setTimeout(() => { fired = true; fn(); }, 500); };
+  const cancel = () => clearTimeout(timer);
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchend', cancel); el.addEventListener('touchmove', cancel, { passive: true }); el.addEventListener('touchcancel', cancel);
+  el.addEventListener('contextmenu', (ev) => { ev.preventDefault(); ev.stopPropagation(); if (!fired) { cancel(); fired = true; fn(); } });
+  el.addEventListener('click', (ev) => { if (fired) { fired = false; ev.stopImmediatePropagation(); ev.preventDefault(); } }, true);
+}
+// Fenêtre « − Vu N fois + » pour corriger le nombre de visionnages. get() = revisionnages (en plus du 1er
+// visionnage), set(n) les enregistre, onChange() rafraîchit l'affichage derrière.
+function openRewatchStepper(title, get, set, onChange) {
+  showModal(`
+    <h2 style="margin:0 0 4px">🔁 Visionnages</h2>
+    <p class="hint" style="color:var(--muted);margin:0 0 14px">${esc(title)}</p>
+    <div class="rw-stepper"><button type="button" class="btn" data-d="-1" aria-label="Un visionnage de moins">−</button><b id="rwCount"></b><button type="button" class="btn" data-d="1" aria-label="Un visionnage de plus">+</button></div>
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end"><button class="btn primary" data-close>Terminé</button></div>`, (root) => {
+    const out = root.querySelector('#rwCount');
+    const paint = () => { const c = get(); out.textContent = `Vu ${c + 1} fois`; root.querySelector('[data-d="-1"]').disabled = c <= 0; };
+    root.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { set(Math.max(0, get() + parseInt(b.dataset.d, 10))); paint(); onChange && onChange(); });
+    paint();
+  });
 }
 const esc = (s) => (s == null ? '' : String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
 
@@ -868,14 +918,16 @@ function showAboutHtml(sh, meta) {
     infoRow('Note du public', meta.vote ? `⭐ ${meta.vote.toFixed(1)}/10 <span class="muted">(${meta.voteCount})</span>` : ''),
     infoRow('Ma note', starsHtml('aboutShowRate', sh.showRating || 0)),
     infoRow('Mes visionnages', watchInfo),
+    infoRow('Revisionnages', showRewatchHistoryHtml(sh)),
   ].join('');
   return `<div class="about">${infoBlock(rows)}${providersHtml(meta.providers)}${castHtml(meta.cast)}${trailerHtml(meta.trailer)}</div>`;
 }
 function movieAboutHtml(m, meta) {
   const rt = (meta && meta.runtime) || m.runtime;
   const watchedAt = movieWatchedOf(m);
+  const rwTxt = rewatchListText(userState.movieRewatchDates && userState.movieRewatchDates[m.name], movieRewatchOf(m));
   const watchInfo = movieStatus(m) === 'watched'
-    ? (watchedAt ? `Vu le ${fmtFull(watchedAt)}` : 'Vu (date non enregistrée)')
+    ? (watchedAt ? `Vu le ${fmtFull(watchedAt)}` : 'Vu (date non enregistrée)') + (rwTxt ? `<br>${rwTxt}` : '')
     : '';
   const rows = [
     infoRow('Genre', meta && meta.genres.length ? esc(meta.genres.join(', ')) : ''),
@@ -947,6 +999,7 @@ function setRewatch(sh, season, number, count) {
   if (!userState.rewatchAt) userState.rewatchAt = {};
   if (c > prev) userState.rewatchAt[k] = Date.now();
   else if (c < prev) delete userState.rewatchAt[k];
+  logRewatchDates('rewatchDates', k, prev, c);
   // Revisionnage détecté quand on (re)commence depuis le début : 1er épisode, ou suite
   // d'épisodes tous déjà revus avant celui-ci. Un épisode isolé au milieu ne déclenche rien.
   if (c > prev && isShowComplete(sh) && continuesFromStart(sh, season, number, c)) markRewatching(sh, c);
@@ -1044,8 +1097,60 @@ function movieRewatchOf(m) {
 }
 function setMovieRewatch(name, count) {
   if (!userState.movieRewatch) userState.movieRewatch = {};
+  const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === name);
+  const prev = m ? movieRewatchOf(m) : (parseInt(userState.movieRewatch[name], 10) || 0);
   userState.movieRewatch[name] = Math.max(0, count | 0);
+  logRewatchDates('movieRewatchDates', name, prev, userState.movieRewatch[name]);
   scheduleSaveState();
+}
+// Dates de chaque revisionnage (en plus du 1er visionnage) : userState.rewatchDates[clé d'épisode] et
+// userState.movieRewatchDates[nom du film] = ["AAAA-MM-JJ HH:MM:SS", …]. +1 ajoute la date du jour,
+// −1 retire la plus récente. Les revisionnages antérieurs à ce suivi n'ont pas de date.
+function logRewatchDates(map, key, prev, c) {
+  if (c === prev) return;
+  if (!userState[map]) userState[map] = {};
+  const arr = (userState[map][key] || []).slice();
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  for (let i = prev; i < c; i++) arr.push(now);
+  if (c < prev) arr.splice(Math.max(0, arr.length - (prev - c)));
+  if (arr.length) userState[map][key] = arr; else delete userState[map][key];
+}
+// « Revu le 3 oct. 2026, le 28 oct. 2026 » (+ revisionnages sans date) — null si aucun revisionnage.
+function rewatchListText(dates, count) {
+  if (!(count > 0)) return null;
+  const d = (dates || []).slice(-count).sort();
+  const undated = count - d.length;
+  const parts = d.map(x => 'le ' + fmtFull(x));
+  if (undated > 0) parts.unshift(undated + ' fois sans date');
+  return 'Revu ' + parts.join(', ');
+}
+// Date du 1er visionnage d'un épisode (ajout dans l'app, sinon export TV Time).
+function episodeSeenAt(sh, season, number) {
+  const a = userState.seenAdd[epKey(sh.key, season, number)];
+  if (a && a.at) return a.at;
+  for (const r of DATA.seen || []) if (String(r.showId) === String(sh.key) && +r.season === +season && +r.number === +number) return r.seenAt || null;
+  return null;
+}
+// Historique des revisionnages d'une série, regroupé par jour (le plus récent d'abord).
+function showRewatchHistoryHtml(sh) {
+  const byDay = {};
+  const pre = sh.key + '|';
+  for (const [k, dates] of Object.entries(userState.rewatchDates || {})) {
+    if (!k.startsWith(pre)) continue;
+    const p = k.split('|'); const s = +p[p.length - 2], n = +p[p.length - 1];
+    for (const d of dates) (byDay[d.slice(0, 10)] = byDay[d.slice(0, 10)] || []).push([s, n]);
+  }
+  const days = Object.keys(byDay).sort().reverse();
+  if (!days.length) return '';
+  const lab = ([s, n]) => `S${String(s).padStart(2, '0')}E${String(n).padStart(2, '0')}`;
+  const line = (day) => {
+    const eps = byDay[day].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const txt = eps.length > 4 ? `${lab(eps[0])} → ${lab(eps[eps.length - 1])}` : eps.map(lab).join(', ');
+    return `<div>${fmtFull(day)} : ${eps.length} épisode${eps.length > 1 ? 's' : ''} <span class="muted">(${txt})</span></div>`;
+  };
+  const head = days.slice(0, 5).map(line).join('');
+  const more = days.length > 5 ? `<details><summary class="muted" style="cursor:pointer">Voir les ${days.length - 5} autres jours</summary>${days.slice(5).map(line).join('')}</details>` : '';
+  return head + more;
 }function toggleWatchlist(sh) {
   if (userState.watchlist[sh.key]) delete userState.watchlist[sh.key];
   else userState.watchlist[sh.key] = true;
@@ -1557,7 +1662,6 @@ function openUnifiedSearch(kind) {
 const MS_DAY = 86400000;
 const RECENT_DAYS = 31; // fenêtre « nouvel épisode récent » (~1 mois)
 const ACTIVE_DAYS = 92; // une série vue il y a moins de ~3 mois est encore « En cours »
-const NEW_EPISODE_DAYS = 120; // new episodes aired within ~4 months count as "En cours"
 function daysSince(dateStr) {
   if (!dateStr) return Infinity;
   const t = Date.parse(String(dateStr).replace(' ', 'T'));
@@ -1604,28 +1708,44 @@ route('home', async (el) => {
 });
 
 // Categorised "À voir" view of the Séries page (En cours / Pas vu / Pas commencée / Terminée).
+// Catégorie d'une série sur la page Séries (« En cours », « Pas vu depuis longtemps », « Pas commencée »,
+// « Terminée ») ; null = arrêtée ou non suivie. Aussi utilisée pour les séries en cours du profil en ligne.
+function seriesCategory(s) {
+  if (s.archived) return null;
+  const started = s.seenKeys.size > 0;
+  if (!started) return s.followed ? 'notStarted' : null;
+  const m = metaFor(s);
+  const total = airedTotal(m);
+  const done = total > 0 && s.seenKeys.size >= total;
+  const rewatching = isRewatching(s);
+  // Tout vu = Terminée — sauf si un nouveau visionnage est en cours (revisionnage).
+  if (done && !rewatching) return 'finished';
+  // « En cours » si :
+  if (isPinnedWatching(s)) return 'watching';                              // épinglée : toujours
+  if (daysSince(s.lastSeenAt) <= ACTIVE_DAYS) return 'watching';           // épisode vu (ou revu) il y a moins de 3 mois
+  const firstNew = done ? null : firstNewEpisodeAir(s, m);
+  if (firstNew && daysSince(firstNew) <= RECENT_DAYS) return 'watching';   // nouvel épisode non vu : 1 mois max après sa sortie
+  return s.followed ? 'stale' : null;
+}
+// Date de sortie du premier épisode sorti APRÈS votre dernier visionnage (le plus ancien des nouveaux),
+// d'après les épisodes en cache ; à défaut, la date du dernier épisode sorti. null s'il n'y en a pas.
+function firstNewEpisodeAir(s, m) {
+  if (!m || !m.lastAir) return null;
+  const lastSeen = s.lastSeenAt ? String(s.lastSeenAt).slice(0, 10) : '';
+  if (m.lastAir <= lastSeen) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  let first = null;
+  for (const se of m.seasons || []) {
+    const eps = se.n > 0 && tmdbCache.seasons[m.id + '|' + se.n];
+    if (!eps) continue;
+    for (const e of eps) if (e.air && e.air > lastSeen && e.air <= today && (!first || e.air < first)) first = e.air;
+  }
+  return first || m.lastAir;
+}
 async function renderSeriesAvoir(el, shows) {
   const watching = [], stale = [], notStarted = [], finished = [];
-  for (const s of shows) {
-    if (s.archived) continue;
-    const started = s.seenKeys.size > 0;
-    if (!started) { if (s.followed) notStarted.push(s); continue; }
-    const m = metaFor(s);
-    const total = airedTotal(m);
-    const done = total > 0 && s.seenKeys.size >= total;
-    const newEp = m && m.lastAir && daysSince(m.lastAir) <= RECENT_DAYS; // épisode sorti récemment
-    // Nouveaux épisodes sortis APRÈS votre dernier visionnage (nouvelle saison récente).
-    const lastAirT = m && m.lastAir ? Date.parse(String(m.lastAir).replace(' ', 'T')) : NaN;
-    const lastSeenT = s.lastSeenAt ? Date.parse(String(s.lastSeenAt).replace(' ', 'T')) : NaN;
-    const newSinceSeen = m && m.lastAir && daysSince(m.lastAir) <= NEW_EPISODE_DAYS
-      && !done && (isNaN(lastSeenT) || lastAirT > lastSeenT);
-    const pinned = isPinnedWatching(s);
-    const rewatching = isRewatching(s);
-    // Tout vu = Terminée — sauf si un nouveau visionnage est en cours (revisionnage).
-    if (done && !rewatching) { finished.push(s); continue; }
-    if (rewatching || pinned || newEp || newSinceSeen || daysSince(s.lastSeenAt) <= ACTIVE_DAYS) watching.push(s);
-    else if (s.followed) stale.push(s);
-  }
+  const lists = { watching, stale, notStarted, finished };
+  for (const s of shows) { const c = seriesCategory(s); if (c) lists[c].push(s); }
   watching.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
   stale.sort((a, b) => (a.lastSeenAt || '').localeCompare(b.lastSeenAt || ''));
   notStarted.sort((a, b) => displayName(a).localeCompare(displayName(b)));
@@ -1633,7 +1753,7 @@ async function renderSeriesAvoir(el, shows) {
 
   // Section definitions, rendered in the user-chosen order.
   const defs = {
-    watching:   { id: 'homeWatching',   icon: '▶️', title: 'En cours',                sub: 'Vue récemment (< 3 mois) ou nouvel épisode récent', list: watching,   withAgo: true },
+    watching:   { id: 'homeWatching',   icon: '▶️', title: 'En cours',                sub: 'Vue il y a moins de 3 mois, épinglée, revisionnage récent ou nouvel épisode (1 mois)', list: watching,   withAgo: true },
     stale:      { id: 'homeStale',      icon: '🕰️', title: 'Pas vu depuis longtemps', sub: 'Séries suivies mises en pause',          list: stale,      withAgo: true },
     notStarted: { id: 'homeNotStarted', icon: '🆕', title: 'Pas commencée',           sub: 'Dans votre liste mais jamais démarrée', list: notStarted, withAgo: false },
     finished:   { id: 'homeFinished',   icon: '✅', title: 'Terminée',                sub: 'Vues intégralement',                    list: finished,   withAgo: true },
@@ -1888,6 +2008,7 @@ route('movie', async (el, rest) => {
           <div class="detail-actions">
             <button class="btn ${st === 'watched' ? 'primary' : ''}" id="mToggle">${st === 'watched' ? '↩ Remettre « à voir »' : '✓ Marquer comme vu'}</button>
             ${st === 'watched' ? `<button class="btn" id="mRw">🔁 +1 visionnage${rw > 0 ? ' (×' + (rw + 1) + ')' : ''}</button>` : ''}
+            ${st === 'watched' && rw > 0 ? `<button class="btn" id="mRwMinus" title="Retirer un visionnage">−1</button>` : ''}
             <button class="btn ${isFavMovie(m) ? 'primary' : ''}" id="mFav">${isFavMovie(m) ? '❤️ Favori' : '🤍 Favori'}</button>
             <button class="btn" id="mAddList">📃 Ajouter à une liste</button>
             <button class="btn" id="mFind">🔍 Chercher une affiche</button>
@@ -1936,7 +2057,14 @@ route('movie', async (el, rest) => {
   el.querySelector('#mToggle').onclick = () => { setMovieStatus(m.name, st === 'watched' ? 'towatch' : 'watched'); toast(st === 'watched' ? 'Remis dans « à voir »' : 'Marqué comme vu'); render(); };
   el.querySelector('#mFav').onclick = () => { toggleFavMovie(m); toast(isFavMovie(m) ? 'Ajouté aux favoris' : 'Retiré des favoris'); render(); };
   el.querySelector('#mAddList').onclick = () => openAddToListModal('movie', m);
-  const rwBtn = el.querySelector('#mRw'); if (rwBtn) rwBtn.onclick = () => { setMovieRewatch(m.name, movieRewatchOf(m) + 1); render(); };
+  const rwBtn = el.querySelector('#mRw');
+  if (rwBtn) rwBtn.onclick = () => {
+    const prev = movieRewatchOf(m);
+    setMovieRewatch(m.name, prev + 1); render();
+    toastUndo(`🔁 Vu ${prev + 2} fois`, () => { setMovieRewatch(m.name, prev); render(); });
+  };
+  const rwMinus = el.querySelector('#mRwMinus');
+  if (rwMinus) rwMinus.onclick = () => { setMovieRewatch(m.name, movieRewatchOf(m) - 1); render(); toast('Un visionnage retiré'); };
   el.querySelector('#mFind').onclick = () => openPosterSearch('movie', { name: m.name });
   const del = el.querySelector('#mDel'); if (del) del.onclick = () => { removeCustomMovie(m.name); toast('Film retiré'); location.hash = '#/movies'; render(); };
   const progSave = el.querySelector('#mProgSave');
@@ -1961,7 +2089,7 @@ function movieCardHtml(m) {
   const rw = movieRewatchOf(m);
   const rwBadge = (st === 'watched' && rw > 0) ? `<span class="badge-count">×${rw + 1}</span>` : '';
   const rwBtn = st === 'watched'
-    ? `<button class="card-rw ${rw > 0 ? 'on' : ''}" data-mrw="${esc(m.name)}" title="Visionnages — clic : +1, clic droit : −1">🔁${rw > 0 ? '×' + (rw + 1) : ''}</button>`
+    ? `<button class="card-rw ${rw > 0 ? 'on' : ''}" data-mrw="${esc(m.name)}" title="Visionnages — appui : +1 · appui long : corriger">🔁${rw > 0 ? '×' + (rw + 1) : ''}</button>`
     : '';
   const delBtn = isCustomMovie(m) ? `<button class="card-del" data-mdel="${esc(m.name)}" title="Retirer ce film ajouté">🗑</button>` : '';
   const prog = movieCardProgress(m);
@@ -1992,14 +2120,16 @@ function wireMovieButtons(container) {
     };
   });
   container.querySelectorAll('[data-mrw]').forEach(b => {
-    const bump = (delta) => {
-      const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === b.dataset.mrw);
-      if (!m) return;
-      setMovieRewatch(b.dataset.mrw, movieRewatchOf(m) + delta);
-      render();
+    const name = b.dataset.mrw;
+    const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === name);
+    if (!m) return;
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const prev = movieRewatchOf(m);
+      setMovieRewatch(name, prev + 1); render();
+      toastUndo(`🔁 ${movieDisplayName(m)} : vu ${prev + 2} fois`, () => { setMovieRewatch(name, prev); render(); });
     };
-    b.onclick = (ev) => { ev.stopPropagation(); bump(1); };
-    b.oncontextmenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); bump(-1); };
+    onLongPress(b, () => openRewatchStepper(movieDisplayName(m), () => movieRewatchOf(m), (c) => setMovieRewatch(name, c), render));
   });
   container.querySelectorAll('[data-mfind]').forEach(b => {
     b.onclick = (ev) => {
@@ -2633,8 +2763,11 @@ route('episode', async (el, rest) => {
   const rw = MODEL.rewatchMap.get(k) || 0;
   const title = (ep && ep.name) || ('Épisode ' + n);
   const overviewTxt = ep ? (ep.overview || 'Pas de synopsis disponible pour cet épisode.') : (hasKey() ? 'Détails indisponibles.' : 'Ajoutez une clé TMDB (Réglages) pour voir les détails de l\'épisode.');
+  const seenAt = seen ? episodeSeenAt(sh, season, n) : null;
+  const rwTxt = rewatchListText(userState.rewatchDates && userState.rewatchDates[k], rw);
   const rows = [
     infoRow('Diffusion', ep && ep.air ? fmtFull(ep.air) : ''),
+    infoRow('Mon visionnage', seen ? (seenAt ? `Vu le ${fmtFull(seenAt)}` : 'Vu (date non enregistrée)') + (rwTxt ? `<br>${rwTxt}` : '') : ''),
     infoRow('Durée', ep && ep.runtime ? `${ep.runtime} min` : ''),
     infoRow('Note du public', ep && ep.vote ? `⭐ ${ep.vote.toFixed(1)}/10 <span class="muted">(${ep.voteCount})</span>` : ''),
   ].join('');
@@ -2662,6 +2795,7 @@ route('episode', async (el, rest) => {
       <div class="detail-actions">
         <button class="btn ${seen ? 'primary' : ''}" id="epSeen">${seen ? '✓ Vu' : 'Marquer comme vu'}</button>
         <button class="btn" id="epRw">🔁 +1 visionnage${rw > 0 ? ` (×${rw + 1})` : ''}</button>
+        ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
       </div>
       <div class="ep-react">
         <span class="react-label">Ma note</span>
@@ -2684,11 +2818,14 @@ route('episode', async (el, rest) => {
     if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
   };
   el.querySelector('#epRw').onclick = () => {
-    setRewatch(sh, season, n, rewatchOf(sh, season, n) + 1);
-    const c = rewatchOf(sh, season, n);
-    el.querySelector('#epRw').textContent = `🔁 +1 visionnage${c > 0 ? ` (×${c + 1})` : ''}`;
+    const prev = rewatchOf(sh, season, n);
+    setRewatch(sh, season, n, prev + 1);
     updateSyncStatus();
+    render(); // affiche la nouvelle date de revisionnage
+    toastUndo(`🔁 Vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); render(); });
   };
+  const epRwMinus = el.querySelector('#epRwMinus');
+  if (epRwMinus) epRwMinus.onclick = () => { setRewatch(sh, season, n, rewatchOf(sh, season, n) - 1); render(); toast('Un visionnage retiré'); };
   el.querySelector('.stars[data-id="epRate"]').addEventListener('click', (ev) => {
     const clr = ev.target.closest('.star-clear'); const s = ev.target.closest('.s');
     if (!clr && !s) return;
@@ -2904,7 +3041,7 @@ function epHtml(sh, season, e, pass) {
     <div class="check ${seen ? 'on' : ''}" data-act="seen">✓</div>
     <div class="num">${season}×${String(e.n).padStart(2, '0')}</div>
     <div class="epname" data-act="open">${esc(e.name || 'Épisode ' + e.n)}${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
-    <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Visionnages — clic : +1, clic droit : −1">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
+    <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Visionnages — appui : +1 · appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
     <div class="stars" data-act="rate">${[1, 2, 3, 4, 5].map(v => `<span class="s ${v <= rating ? 'on' : ''}" data-v="${v}">★</span>`).join('')}<button type="button" class="star-clear" title="Retirer ma note"${rating > 0 ? '' : ' hidden'}>✕</button></div>
     <div class="react" data-act="emo">${EMOTIONS.slice(0, 5).map(em => `<button data-e="${em.id}" title="${em.label}" class="${emo === em.id ? 'on' : ''}">${em.emoji}</button>`).join('')}</div>
     ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">🗑</button>` : ''}
@@ -3007,8 +3144,13 @@ function wireEpisodes(container, sh, season, onChange, opts) {
       row.querySelector('.check').classList.toggle('on', seen);
       repaintPass(sh);
     };
-    rwEl.onclick = () => { setRewatch(sh, season, n, rewatchOf(sh, season, n) + 1); paintRw(); updateSyncStatus(); onChange(); };
-    rwEl.oncontextmenu = (ev) => { ev.preventDefault(); setRewatch(sh, season, n, rewatchOf(sh, season, n) - 1); paintRw(); onChange(); };
+    const epTitle = `${displayName(sh)} · S${String(season).padStart(2, '0')}E${String(n).padStart(2, '0')}`;
+    rwEl.onclick = () => {
+      const prev = rewatchOf(sh, season, n);
+      setRewatch(sh, season, n, prev + 1); paintRw(); updateSyncStatus(); onChange();
+      toastUndo(`🔁 S${String(season).padStart(2, '0')}E${String(n).padStart(2, '0')} : vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); paintRw(); onChange(); });
+    };
+    onLongPress(rwEl, () => openRewatchStepper(epTitle, () => rewatchOf(sh, season, n), (c) => setRewatch(sh, season, n, c), () => { paintRw(); onChange(); }));
     row.querySelector('[data-act="rate"]').onclick = (ev) => {
       const clr = ev.target.closest('.star-clear');
       const s = ev.target.closest('.s');
@@ -4266,7 +4408,7 @@ function sbPanelHtml() {
         <div class="row" style="margin-top:8px"><button class="btn" id="sbSetPw">Enregistrer le mot de passe</button> <span id="sbPwStatus" class="sub"></span></div>
       </details>`;
   } else {
-    inner = `<p class="hint" style="color:var(--muted)">Connectez-vous pour garder votre historique en sécurité sur Internet (une seule sauvegarde privée, remplacée chaque semaine automatiquement) et pour retrouver vos amis.</p>
+    inner = `<p class="hint" style="color:var(--muted)">Connectez-vous pour garder votre historique en sécurité sur Internet (une seule sauvegarde privée, mise à jour automatiquement chaque jour) et pour retrouver vos amis.</p>
       <input class="input" id="sbEmail" type="email" autocomplete="email" placeholder="Votre e-mail" value="${esc(sbPendingEmail || '')}">
       <input class="input" id="sbPw" type="password" autocomplete="current-password" placeholder="Mot de passe (6 caractères minimum)" style="margin-top:8px">
       <div class="row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
@@ -4334,11 +4476,12 @@ function sbWirePanel(el) {
     await applyBackup(parsed);
   });
 }
-// Sauvegarde hebdomadaire silencieuse quand on est connecté.
+// Sauvegarde en ligne silencieuse, une fois par jour, quand on est connecté.
+const CLOUD_BACKUP_EVERY_DAYS = 1;
 function sbMaybeAutoBackup() {
-  if (!sbSession || sbBusy || daysSince(userState.lastCloudBackupAt) < BACKUP_EVERY_DAYS) return false;
+  if (!sbSession || sbBusy || daysSince(userState.lastCloudBackupAt) < CLOUD_BACKUP_EVERY_DAYS) return false;
   sbBusy = true;
-  sbUpload().then(() => toast('☁️ Sauvegarde en ligne faite')).catch(() => {}).finally(() => { sbBusy = false; });
+  sbUpload().catch(() => {}).finally(() => { sbBusy = false; }); // silencieux : réessayé à la prochaine ouverture si échec
   return true;
 }
 
@@ -4380,12 +4523,14 @@ function buildShareSnapshot() {
   };
   const posterOf = (s) => { const m = metaFor(s); return (m && m.poster) || s.poster || null; };
   if (shareOpt('watching')) {
-    snap.watching = shows.filter(s => !s.archived && s.seenKeys.size > 0 && daysSince(s.lastSeenAt) <= ACTIVE_DAYS)
-      .map(s => ({ s, total: airedTotal(metaFor(s)) }))
-      .filter(x => !(x.total > 0 && x.s.seenKeys.size >= x.total))
-      .sort((a, b) => (b.s.lastSeenAt || '').localeCompare(a.s.lastSeenAt || ''))
-      .slice(0, 12)
-      .map(x => ({ n: displayName(x.s), p: posterOf(x.s), d: x.s.seenKeys.size, t: x.total || 0 }));
+    snap.watching = shows.filter(s => seriesCategory(s) === 'watching')
+      .sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''))
+      .slice(0, 30)
+      .map(s => {
+        const pass = isRewatching(s) && rewatchPass(s); // revisionnage : progression du nouveau passage
+        return pass ? { n: displayName(s), p: posterOf(s), d: pass.done, t: pass.total, r: 1 }
+          : { n: displayName(s), p: posterOf(s), d: s.seenKeys.size, t: airedTotal(metaFor(s)) || 0 };
+      });
   }
   if (shareOpt('recent')) {
     const ev = [];
@@ -4617,7 +4762,7 @@ route('friends', async (el) => {
   el.innerHTML = `${head}
     ${sbProfile.is_public ? '' : `<div class="panel"><p class="hint" style="color:var(--muted);margin:0">🔒 Votre profil est invisible : on ne peut pas vous trouver avec votre pseudo. <a href="#/profile">Le rendre visible</a></p></div>`}
     ${incoming.length ? `<div class="panel fr-requests"><h3>📩 Demandes d'ami <span style="color:var(--muted);font-weight:400">· ${incoming.length}</span></h3>
-      ${incoming.map(f => person(f, `<button class="btn sm primary" data-accept="${esc(f.id)}">Accepter</button><button class="btn sm ghost" data-refuse="${esc(f.id)}">Refuser</button>`, 'veut être votre ami')).join('')}</div>` : ''}
+      ${incoming.map(f => person(f, `<button class="btn sm primary" data-accept="${esc(f.id)}">Accepter</button><button class="btn sm ghost" data-refuse="${esc(f.id)}">Refuser</button>`, 'veut être votre ami(e)')).join('')}</div>` : ''}
     <div class="panel"><h3>Ajouter un ami</h3>
       <div class="row" style="display:flex;gap:10px"><input class="input" id="frAdd" placeholder="Son pseudo" autocapitalize="off" autocomplete="off" style="flex:1"><button class="btn primary" id="frAddBtn">Envoyer</button></div>
       <span id="frAddStatus" class="sub"></span>
@@ -4668,7 +4813,7 @@ route('friend', async (el, rest) => {
       <div class="stat-card"><div class="k">Épisodes vus</div><div class="v">${esc(st.eps)}</div></div>
       <div class="stat-card"><div class="k">Séries commencées</div><div class="v">${esc(st.shows)}</div></div>
       <div class="stat-card"><div class="k">Films vus</div><div class="v">${esc(st.movies)}</div></div></div>` : '<p class="hint" style="color:var(--muted)">Rien n\'a encore été publié.</p>'}
-    ${row('▶️ En cours', s.watching, (it) => it.t ? `<small class="sub">${esc(it.d)}/${esc(it.t)} ép.</small>` : '')}
+    ${row('▶️ En cours', s.watching, (it) => it.t ? `<small class="sub">${it.r ? '🔁 ' : ''}${esc(it.d)}/${esc(it.t)} ép.</small>` : (it.r ? '<small class="sub">🔁 revisionnage</small>' : ''))}
     ${s.recent && s.recent.length ? `<div class="panel"><h3>🕒 Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
     ${row('❤️ Séries favorites', s.favShows)}
     ${row('🎬 Films favoris', s.favMovies)}
@@ -4693,9 +4838,10 @@ const BACKUP_EVERY_DAYS = 7;
 // Sur téléphone, les données vivent dans le navigateur (effacées si on vide les données de Chrome) :
 // une fois par semaine, on propose d'enregistrer une sauvegarde dans un fichier (Toujours le même nom).
 function maybeWeeklyBackup() {
-  if (serverAvailable || userState.weeklyBackup === false) return;
+  if (serverAvailable) return;
   if (!(DATA.seen || []).length && !Object.keys(userState.seenAdd || {}).length) return;
-  if (sbSession) { sbMaybeAutoBackup(); return; } // connecté : sauvegarde en ligne automatique, pas de bannière
+  if (sbSession) { sbMaybeAutoBackup(); return; } // connecté : sauvegarde en ligne quotidienne, pas de bannière
+  if (userState.weeklyBackup === false) return;
   if (Date.now() < (userState.backupSnoozeUntil || 0)) return;
   if (daysSince(userState.lastBackupAt) < BACKUP_EVERY_DAYS) return;
   if (document.querySelector('.backup-banner')) return;
@@ -4814,13 +4960,15 @@ function reconcileDuplicateMovies() {
     }
     const rw = Math.max(movieRewatchOf(d), movieRewatchOf(c));
     if (rw > movieRewatchOf(d)) bag('movieRewatch')[dn] = rw;
+    const rd = userState.movieRewatchDates || {};
+    if (rd[cn]) bag('movieRewatchDates')[dn] = [...new Set([...(rd[dn] || []), ...rd[cn]])].sort();
     if (userState.movieRatings && userState.movieRatings[cn] && !movieRatingOf(d)) bag('movieRatings')[dn] = userState.movieRatings[cn];
     if (userState.movieEmotions && userState.movieEmotions[cn] && !userState.movieEmotions[dn]) bag('movieEmotions')[dn] = userState.movieEmotions[cn];
     if (isFavMovie(c)) bag('favMovies')[dn] = true;
     if (userState.movieProgress && userState.movieProgress[cn] && !userState.movieProgress[dn]) bag('movieProgress')[dn] = userState.movieProgress[cn];
     if (userState.movieTmdb && userState.movieTmdb[cn] && !idOf(dn)) bag('movieTmdb')[dn] = userState.movieTmdb[cn];
     for (const l of userState.userLists || []) if (l.movies && l.movies.includes(cn)) l.movies = [...new Set(l.movies.map(x => x === cn ? dn : x))];
-    for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb']) if (userState[k]) delete userState[k][cn];
+    for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRewatchDates', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb']) if (userState[k]) delete userState[k][cn];
     cm.splice(cm.indexOf(c), 1);
     merged++;
   }
