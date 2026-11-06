@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 47, date: '6 novembre 2026', title: 'Mot de passe oublié', items: [
+    'Nouveau bouton « Mot de passe oublié ? » sous la connexion : vous recevez un e-mail, touchez le lien, puis choisissez un nouveau mot de passe.',
+    'À la création d’un compte et quand vous changez de mot de passe, il faut maintenant le taper deux fois, pour éviter une faute de frappe.',
+  ] },
   { id: 46, date: '30 octobre 2026', title: 'Progression des amis', items: [
     'Sur la fiche d’un ami, ses séries en cours affichent la même barre de progression que les vôtres sous l’affiche (orange en cours, bleu pour un revisionnage), au lieu du nombre d’épisodes.',
   ] },
@@ -4246,7 +4250,7 @@ async function sbSignInPassword(email, password) {
   if (res.status === 400 || res.status === 401) {
     const err = await sbError(res);
     if (/confirm/i.test(err.message)) throw new Error('Compte pas encore confirmé : dans Supabase, désactivez « Confirm email », ou connectez-vous par lien');
-    throw new Error('E-mail ou mot de passe incorrect. Compte créé avec un lien ? Connectez-vous par lien (ci-dessous), puis choisissez un mot de passe dans Mon compte.');
+    throw new Error('E-mail ou mot de passe incorrect. Vous ne vous en souvenez plus, ou votre compte a été créé avec un lien ? Touchez « Mot de passe oublié ? ».');
   }
   if (!res.ok) throw await sbError(res);
   sbStoreSession(sbSessionFrom(await res.json()));
@@ -4312,13 +4316,56 @@ async function sbSignInWithLink(text) {
   const hs = new URLSearchParams(u.hash.replace(/^#/, ''));
   if (hs.get('access_token')) {
     const s = sbSessionFromHash(hs); if (!s || !s.uid) throw new Error('Lien non reconnu');
-    sbStoreSession(s); return;
+    sbStoreSession(s);
+    if (hs.get('type') === 'recovery') setTimeout(sbAskNewPassword, 300);
+    return;
   }
   const tokenHash = u.searchParams.get('token_hash') || u.searchParams.get('token');
   if (!tokenHash) throw new Error('Lien non reconnu');
-  const res = await sbRequest('/auth/v1/verify', { method: 'POST', json: { type: u.searchParams.get('type') || 'magiclink', token_hash: tokenHash } });
+  const type = u.searchParams.get('type') || 'magiclink';
+  const res = await sbRequest('/auth/v1/verify', { method: 'POST', json: { type, token_hash: tokenHash } });
   if (!res.ok) throw new Error('Ce lien a déjà servi ou a expiré (un lien ne marche qu\'une fois) : redemandez un lien et ne le touchez pas, faites un appui long → Copier');
   sbStoreSession(sbSessionFrom(await res.json()));
+  if (type === 'recovery') setTimeout(sbAskNewPassword, 300);
+}
+// « Mot de passe oublié » : Supabase envoie un e-mail avec un lien (type=recovery) qui revient dans l'app
+// connecté ; l'app demande alors le nouveau mot de passe (sbAskNewPassword).
+async function sbSendRecovery(email) {
+  const back = encodeURIComponent(location.origin + location.pathname);
+  const res = await sbRequest('/auth/v1/recover?redirect_to=' + back, { method: 'POST', json: { email } });
+  if (res.status === 429) throw new Error('Trop d\'e-mails envoyés pour l\'instant (limite du service gratuit, environ 2 par heure pour tout le monde). Réessayez dans une heure, une seule fois.');
+  if (!res.ok) throw await sbError(res);
+}
+function sbAskNewPassword() {
+  if (!sbSession) return;
+  showModal(`
+    <h2 style="margin:0 0 6px">🔑 Nouveau mot de passe</h2>
+    <p class="hint" style="color:var(--muted)">Choisissez votre nouveau mot de passe (6 caractères minimum).</p>
+    <input class="input" id="npw1" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe" style="width:100%">
+    <input class="input" id="npw2" type="password" autocomplete="new-password" placeholder="Confirmez le mot de passe" style="width:100%;margin-top:8px">
+    <p class="hint" id="npwMsg" style="color:var(--muted)"></p>
+    <div class="modal-actions" style="margin-top:8px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" data-close>Plus tard</button>
+      <button class="btn primary" id="npwOk">Enregistrer</button>
+    </div>`, (root) => {
+    const msg = root.querySelector('#npwMsg'), ok = root.querySelector('#npwOk');
+    ok.onclick = async () => {
+      const a = root.querySelector('#npw1').value, b = root.querySelector('#npw2').value;
+      if (a.length < 6) { msg.textContent = '❌ 6 caractères minimum'; return; }
+      if (a !== b) { msg.textContent = '❌ Les deux mots de passe ne sont pas identiques'; return; }
+      ok.disabled = true; msg.textContent = '…';
+      try { await sbSetPassword(a); }
+      catch (e) { msg.textContent = '❌ ' + (e.message || 'Échec'); ok.disabled = false; return; }
+      if (isIOS && !isStandalone()) {
+        // Lien ouvert dans Safari : l'app installée a son propre stockage → on s'y connecte avec le nouveau mot de passe.
+        sbStoreSession(null);
+        showModal(`<h2 style="margin:0 0 6px">✅ Mot de passe enregistré</h2>
+          <p class="hint">Ouvrez maintenant l'app TV Time depuis l'écran d'accueil et connectez-vous avec votre e-mail et ce nouveau mot de passe.</p>
+          <div class="modal-actions" style="margin-top:12px;display:flex;justify-content:flex-end"><button class="btn primary" data-close>OK</button></div>`);
+      } else { closeModal(); toast('✅ Mot de passe enregistré'); }
+      render();
+    };
+  });
 }
 // Retour depuis le lien de l'e-mail : la page s'ouvre avec le jeton dans l'adresse (#access_token=…).
 // À traiter avant le routeur, puis on remplace l'adresse par la page Réglages.
@@ -4332,7 +4379,8 @@ async function sbSignInWithLink(text) {
   else if (params.get('error_description')) msg = 'Lien invalide ou expiré : demandez-en un nouveau';
   history.replaceState(null, '', location.pathname + location.search + '#/profile');
   if (msg) setTimeout(() => toast(msg), 1200);
-  if (s && s.uid && isIOS && !isStandalone()) setTimeout(sbShowHandoff, 1600);
+  if (s && s.uid && params.get('type') === 'recovery') setTimeout(sbAskNewPassword, 1600); // « mot de passe oublié »
+  else if (s && s.uid && isIOS && !isStandalone()) setTimeout(sbShowHandoff, 1600);
 })();
 // iPhone : le lien de l'e-mail s'ouvre dans Safari, dont le stockage est séparé de l'app installée sur
 // l'écran d'accueil. On propose alors de copier un « code de transfert » à coller dans l'app.
@@ -4408,17 +4456,20 @@ function sbPanelHtml() {
       <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">🔑 Choisir ou changer mon mot de passe</summary>
         <p class="hint" style="color:var(--muted)">Utile si vous vous êtes connecté avec un lien reçu par e-mail : ensuite, vous vous connecterez avec votre e-mail et ce mot de passe (6 caractères minimum).</p>
         <input class="input" id="sbNewPw" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe">
+        <input class="input" id="sbNewPw2" type="password" autocomplete="new-password" placeholder="Confirmez le mot de passe" style="margin-top:8px">
         <div class="row" style="margin-top:8px"><button class="btn" id="sbSetPw">Enregistrer le mot de passe</button> <span id="sbPwStatus" class="sub"></span></div>
       </details>`;
   } else {
     inner = `<p class="hint" style="color:var(--muted)">Connectez-vous pour garder votre historique en sécurité sur Internet (une seule sauvegarde privée, mise à jour automatiquement chaque jour) et pour retrouver vos amis.</p>
       <input class="input" id="sbEmail" type="email" autocomplete="email" placeholder="Votre e-mail" value="${esc(sbPendingEmail || '')}">
       <input class="input" id="sbPw" type="password" autocomplete="current-password" placeholder="Mot de passe (6 caractères minimum)" style="margin-top:8px">
+      <input class="input" id="sbPw2" type="password" autocomplete="new-password" placeholder="Confirmez le mot de passe (nouveau compte)" style="margin-top:8px" hidden>
       <div class="row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
         <button class="btn primary" id="sbLogin">Se connecter</button>
         <button class="btn" id="sbSignup">Créer un compte</button>
       </div>
       <span id="sbStatus" class="sub"></span>
+      <p style="margin:8px 0 0"><button type="button" class="btn ghost sm" id="sbForgot">Mot de passe oublié ?</button></p>
       <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">Autre façon : recevoir un lien par e-mail</summary>
         <p class="hint" style="color:var(--muted)">Pour un compte créé avant les mots de passe, ou en cas d'oubli : recevez un lien de connexion (au plus 2 e-mails par heure pour tout le monde), puis choisissez un mot de passe dans Mon compte.</p>
         <div class="row" style="margin-top:8px"><button class="btn" id="sbSend">Recevoir le lien</button></div>
@@ -4450,7 +4501,20 @@ function sbWirePanel(el) {
     return { email, pw };
   };
   on('#sbLogin', async () => { const { email, pw } = creds(); say('Connexion…'); await sbSignInPassword(email, pw); toast('Connecté'); render(); });
-  on('#sbSignup', async () => { const { email, pw } = creds(); say('Création du compte…'); await sbSignUp(email, pw); toast('Compte créé, vous êtes connecté'); render(); });
+  on('#sbSignup', async () => {
+    const { email, pw } = creds();
+    const pw2El = el.querySelector('#sbPw2');
+    if (pw2El.hidden) { pw2El.hidden = false; pw2El.focus(); throw new Error('Retapez le mot de passe dans le 2ᵉ champ, puis touchez à nouveau « Créer un compte »'); }
+    if (pw2El.value !== pw) throw new Error('Les deux mots de passe ne sont pas identiques');
+    say('Création du compte…'); await sbSignUp(email, pw); toast('Compte créé, vous êtes connecté'); render();
+  });
+  on('#sbForgot', async () => {
+    const email = el.querySelector('#sbEmail').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { el.querySelector('#sbEmail').focus(); throw new Error('Indiquez d\'abord votre e-mail ci-dessus'); }
+    say('Envoi…'); await sbSendRecovery(email);
+    say('✉️ E-mail envoyé à ' + email + ' : touchez le lien qu\'il contient (regardez aussi les indésirables), puis choisissez votre nouveau mot de passe.');
+    el.querySelector('#sbForgot').disabled = false;
+  });
   on('#sbSend', async () => {
     const email = el.querySelector('#sbEmail').value.trim();
     if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('E-mail invalide');
@@ -4460,8 +4524,9 @@ function sbWirePanel(el) {
   if (pwb) pwb.onclick = async () => {
     const ps = el.querySelector('#sbPwStatus'), pw = el.querySelector('#sbNewPw').value;
     if (pw.length < 6) { ps.textContent = '❌ 6 caractères minimum'; return; }
+    if (el.querySelector('#sbNewPw2').value !== pw) { ps.textContent = '❌ Les deux mots de passe ne sont pas identiques'; return; }
     if (sbBusy) return; sbBusy = true; pwb.disabled = true; ps.textContent = '…';
-    try { await sbSetPassword(pw); ps.textContent = '✅ Mot de passe enregistré'; el.querySelector('#sbNewPw').value = ''; }
+    try { await sbSetPassword(pw); ps.textContent = '✅ Mot de passe enregistré'; el.querySelector('#sbNewPw').value = ''; el.querySelector('#sbNewPw2').value = ''; }
     catch (e) { ps.textContent = '❌ ' + (e.message || 'Échec'); }
     pwb.disabled = false; sbBusy = false;
   };
