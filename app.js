@@ -11,6 +11,14 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 48, date: '8 novembre 2026', title: 'Personnalisation', items: [
+    'Nouveau : Mon compte → 🎨 Personnalisation.',
+    'Choisissez la couleur principale de l’application (8 couleurs), le thème (sombre, noir total ou clair), la taille du texte et la taille des affiches.',
+    'Choisissez l’onglet qui s’ouvre au lancement (Séries, Films, Explorer ou Amis) et masquez les sections de la page Séries dont vous ne vous servez pas.',
+    'Les durées de la règle « En cours » sont réglables (3 mois et 1 mois par défaut).',
+    'Choisissez et ordonnez les rangées d’Explorer.',
+    'Anti-spoiler : le titre, l’image et le résumé des épisodes pas encore vus sont floutés (touchez pour les afficher).',
+  ] },
   { id: 47, date: '6 novembre 2026', title: 'Mot de passe oublié', items: [
     'Nouveau bouton « Mot de passe oublié ? » sous la connexion : vous recevez un e-mail, touchez le lien, puis choisissez un nouveau mot de passe.',
     'À la création d’un compte et quand vous changez de mot de passe, il faut maintenant le taper deux fois, pour éviter une faute de frappe.',
@@ -1273,7 +1281,7 @@ document.addEventListener('click', (ev) => {
   const c = ev.target.closest && ev.target.closest('.cast-item[data-pname]');
   if (c) openPerson(c.dataset.pid, c.dataset.pname);
 });
-const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Mon compte', friends: 'Amis', settings: 'Réglages', changelog: 'Notes de version', episode: 'Épisode', preview: 'Aperçu' };
+const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Mon compte', friends: 'Amis', settings: 'Réglages', custom: 'Personnalisation', changelog: 'Notes de version', episode: 'Épisode', preview: 'Aperçu' };
 // Label of the page « ← Retour » leads to (fallback = page used when there is no history).
 function backLabel(fallback) {
   const prev = navStack.length > 1 ? navStack[navStack.length - 2] : fallback;
@@ -1729,9 +1737,9 @@ function seriesCategory(s) {
   if (done && !rewatching) return 'finished';
   // « En cours » si :
   if (isPinnedWatching(s)) return 'watching';                              // épinglée : toujours
-  if (daysSince(s.lastSeenAt) <= ACTIVE_DAYS) return 'watching';           // épisode vu (ou revu) il y a moins de 3 mois
+  if (daysSince(s.lastSeenAt) <= activeDays()) return 'watching';         // épisode vu (ou revu) récemment (3 mois par défaut)
   const firstNew = done ? null : firstNewEpisodeAir(s, m);
-  if (firstNew && daysSince(firstNew) <= RECENT_DAYS) return 'watching';   // nouvel épisode non vu : 1 mois max après sa sortie
+  if (firstNew && daysSince(firstNew) <= newEpDays()) return 'watching';   // nouvel épisode non vu : 1 mois max (par défaut) après sa sortie
   return s.followed ? 'stale' : null;
 }
 // Date de sortie du premier épisode sorti APRÈS votre dernier visionnage (le plus ancien des nouveaux),
@@ -1760,7 +1768,7 @@ async function renderSeriesAvoir(el, shows) {
 
   // Section definitions, rendered in the user-chosen order.
   const defs = {
-    watching:   { id: 'homeWatching',   icon: '▶️', title: 'En cours',                sub: 'Vue il y a moins de 3 mois, épinglée, revisionnage récent ou nouvel épisode (1 mois)', list: watching,   withAgo: true },
+    watching:   { id: 'homeWatching',   icon: '▶️', title: 'En cours',                sub: `Vue il y a moins de ${fmtDays(activeDays())}, épinglée, revisionnage récent ou nouvel épisode (${fmtDays(newEpDays())})`, list: watching,   withAgo: true },
     stale:      { id: 'homeStale',      icon: '🕰️', title: 'Pas vu depuis longtemps', sub: 'Séries suivies mises en pause',          list: stale,      withAgo: true },
     notStarted: { id: 'homeNotStarted', icon: '🆕', title: 'Pas commencée',           sub: 'Dans votre liste mais jamais démarrée', list: notStarted, withAgo: false },
     finished:   { id: 'homeFinished',   icon: '✅', title: 'Terminée',                sub: 'Vues intégralement',                    list: finished,   withAgo: true },
@@ -1783,7 +1791,8 @@ async function renderSeriesAvoir(el, shows) {
     </section>`;
   };
 
-  el.innerHTML = order.map((secId, i) => sectionHtml(secId, i, order.length)).join('');
+  const shown = homeEditOrder ? order : order.filter(sec => !isHomeSectionHidden(sec));
+  el.innerHTML = shown.map((secId, i) => sectionHtml(secId, i, shown.length)).join('');
 
   el.querySelectorAll('.sec-info').forEach(b => b.onclick = () => {
     const sec = b.closest('.home-section')?.dataset.sec;
@@ -2782,6 +2791,7 @@ route('episode', async (el, rest) => {
     ? `<div class="about" style="margin-top:16px"><div class="about-block"><h3>Invités</h3><div class="cast-list">${ep.guests.map(castItemHtml).join('')}</div></div></div>`
     : '';
 
+  const hideSpoil = antiSpoiler() && !seen; // anti-spoiler (Personnalisation)
   const stillImg = ep && ep.still ? `<img src="${IMG(ep.still, 'w780')}" alt="">` : `<div class="ep-still-ph">${season}×${String(n).padStart(2, '0')}</div>`;
   const nb = { key: sh.key, ...(await episodeNeighbors(tmdbId, season, n)) };
   el._epNb = nb; // read by the swipe to know the previous / next episode of this page
@@ -2789,7 +2799,7 @@ route('episode', async (el, rest) => {
   el.innerHTML = `
     ${backBtn('#/show/' + encodeURIComponent(sh.key))}
     <div class="ep-page">
-      <h1 class="ep-title">${esc(title)}</h1>
+      <h1 class="ep-title ${hideSpoil ? 'spoil' : ''}">${esc(title)}</h1>
       <div class="ep-num-row">
         <div class="ep-num">Saison ${season} · Épisode ${n}</div>
         <div class="ep-nav">
@@ -2797,8 +2807,9 @@ route('episode', async (el, rest) => {
           ${nb.next ? `<button class="btn sm ghost" data-epnav="next" title="Épisode suivant">${epLabel(nb.next)} ›</button>` : ''}
         </div>
       </div>
-      <div class="ep-visual">${stillImg}</div>
-      <p class="synopsis-text ep-synopsis">${esc(overviewTxt)}</p>
+      <div class="ep-visual ${hideSpoil ? 'spoil' : ''}">${stillImg}</div>
+      ${hideSpoil ? '<p class="spoil-hint">🙈 Épisode pas encore vu : touchez pour afficher le titre, l\'image et le résumé</p>' : ''}
+      <p class="synopsis-text ep-synopsis ${hideSpoil ? 'spoil' : ''}">${esc(overviewTxt)}</p>
       <div class="detail-actions">
         <button class="btn ${seen ? 'primary' : ''}" id="epSeen">${seen ? '✓ Vu' : 'Marquer comme vu'}</button>
         <button class="btn" id="epRw">🔁 +1 visionnage${rw > 0 ? ` (×${rw + 1})` : ''}</button>
@@ -2824,6 +2835,8 @@ route('episode', async (el, rest) => {
     updateSyncStatus();
     if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
   };
+  const revealSpoil = () => { el.querySelectorAll('.spoil').forEach(x => x.classList.remove('spoil')); el.querySelector('.spoil-hint')?.remove(); };
+  el.querySelectorAll('.spoil, .spoil-hint').forEach(x => x.addEventListener('click', revealSpoil));
   el.querySelector('#epRw').onclick = () => {
     const prev = rewatchOf(sh, season, n);
     setRewatch(sh, season, n, prev + 1);
@@ -3047,7 +3060,7 @@ function epHtml(sh, season, e, pass) {
   return `<div class="ep ${seen ? 'seen' : ''} ${cur ? 'cur' : ''} ${e.custom ? 'custom' : ''}" data-n="${e.n}">
     <div class="check ${seen ? 'on' : ''}" data-act="seen">✓</div>
     <div class="num">${season}×${String(e.n).padStart(2, '0')}</div>
-    <div class="epname" data-act="open">${esc(e.name || 'Épisode ' + e.n)}${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
+    <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + e.n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
     <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Visionnages — appui : +1 · appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
     <div class="stars" data-act="rate">${[1, 2, 3, 4, 5].map(v => `<span class="s ${v <= rating ? 'on' : ''}" data-v="${v}">★</span>`).join('')}<button type="button" class="star-clear" title="Retirer ma note"${rating > 0 ? '' : ' hidden'}>✕</button></div>
     <div class="react" data-act="emo">${EMOTIONS.slice(0, 5).map(em => `<button data-e="${em.id}" title="${em.label}" class="${emo === em.id ? 'on' : ''}">${em.emoji}</button>`).join('')}</div>
@@ -3566,8 +3579,9 @@ route('explore', async (el) => {
   let rowsTok = 0;
   const showTrending = async () => {
     const tok = ++rowsTok;
-    results.innerHTML = EXPLORE_ROWS.map(r => `<div class="exp-section" data-row="${r.id}"><h2>${r.title}</h2><div class="exp-row" id="${r.id}"><div class="loading">Chargement…</div></div></div>`).join('');
-    await Promise.all(EXPLORE_ROWS.map(async (r) => {
+    const rows = exploreRowsShown();
+    results.innerHTML = rows.map(r => `<div class="exp-section" data-row="${r.id}"><h2>${r.title}</h2><div class="exp-row" id="${r.id}"><div class="loading">Chargement…</div></div></div>`).join('');
+    await Promise.all(rows.map(async (r) => {
       let hits = [];
       try { hits = await exploreRowHits(r); } catch {}
       if (tok !== rowsTok || input.value.trim().length >= 2) return;
@@ -3830,6 +3844,7 @@ route('profile', async (el) => {
       <a class="menu-card" href="#/library"><span class="ic">📚</span><b>Bibliothèque</b><small>Toutes vos œuvres — séries &amp; films</small></a>
       <a class="menu-card" href="#/stats"><span class="ic">📊</span><b>Statistiques</b><small>Séries &amp; films</small></a>
       <a class="menu-card" href="#/lists"><span class="ic">📃</span><b>Listes</b><small>Créez et modifiez vos listes</small></a>
+      <a class="menu-card" href="#/custom"><span class="ic">🎨</span><b>Personnalisation</b><small>Couleurs, thème, tailles, accueil</small></a>
       <a class="menu-card" href="#/settings"><span class="ic">⚙️</span><b>Réglages</b><small>Clé TMDB, synchronisation, sauvegarde</small></a>
       <a class="menu-card" href="#/changelog"><span class="ic">🆕</span><b>Notes de version</b><small>Les nouveautés de chaque mise à jour</small></a>
     </div>
@@ -4087,10 +4102,7 @@ route('settings', async (el) => {
     <div class="page-head"><h1>Réglages</h1></div>
     <div class="panel">
       <h3>Affichage</h3>
-      <label class="check-row" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
-        <input type="checkbox" id="amoledToggle" ${userState.amoled ? 'checked' : ''} style="margin-top:3px">
-        <span>Fond totalement noir (AMOLED)<span class="hint" style="display:block;color:var(--muted)">Idéal pour les écrans OLED : économise la batterie et n'allume pas les pixels inutiles.</span></span>
-      </label>
+      <p class="hint" style="color:var(--muted);margin:0">Couleurs, thème clair ou noir, tailles, onglet d'ouverture… : <a href="#/custom">🎨 Personnalisation</a>.</p>
     </div>
     <div class="panel">
       <div class="settings-field">
@@ -4139,7 +4151,6 @@ route('settings', async (el) => {
       <p style="margin-top:10px"><a class="btn ghost sm" href="#/changelog">🆕 Notes de version</a></p>
     </div>`;
 
-  el.querySelector('#amoledToggle').onchange = (e) => { userState.amoled = e.target.checked; scheduleSaveState(); applyTheme(); };
   el.querySelector('#saveKey').onclick = () => { userState.tmdbKey = el.querySelector('#tmdbKey').value.trim(); scheduleSaveState(); updateSyncStatus(); toast('Clé enregistrée'); };
   el.querySelector('#testKey').onclick = async () => {
     const st = el.querySelector('#keyStatus'); st.textContent = 'Test…';
@@ -5164,13 +5175,133 @@ function updateSyncStatus() {
   el.textContent = hasKey() ? 'TMDB ✓' : 'Hors-ligne';
 }
 // True-black background for AMOLED screens.
+//////////////////////// Personnalisation ////////////////////////
+// Réglages d'apparence et d'organisation, dans userState.prefs (donc inclus dans les sauvegardes).
+const ACCENTS = {
+  jaune:  { c: '#f5c518', c2: '#ffd34e', on: '#10141a', ink: '#8a6a00', label: 'Jaune' },
+  orange: { c: '#f97316', c2: '#fb923c', on: '#10141a', ink: '#c2410c', label: 'Orange' },
+  rouge:  { c: '#ef4444', c2: '#f87171', on: '#ffffff', ink: '#dc2626', label: 'Rouge' },
+  rose:   { c: '#ec4899', c2: '#f472b6', on: '#ffffff', ink: '#db2777', label: 'Rose' },
+  violet: { c: '#a855f7', c2: '#c084fc', on: '#ffffff', ink: '#9333ea', label: 'Violet' },
+  bleu:   { c: '#3b82f6', c2: '#60a5fa', on: '#ffffff', ink: '#2563eb', label: 'Bleu' },
+  cyan:   { c: '#06b6d4', c2: '#22d3ee', on: '#10141a', ink: '#0e7490', label: 'Turquoise' },
+  vert:   { c: '#22c55e', c2: '#4ade80', on: '#10141a', ink: '#15803d', label: 'Vert' },
+};
+const TEXT_SIZES = { s: 0.9, m: 1, l: 1.12, xl: 1.25 };
+const START_TABS = { home: '📺 Séries', movies: '🎬 Films', explore: '🧭 Explorer', friends: '👥 Amis' };
+const prefs = () => userState.prefs || {};
+function setPref(k, v) { userState.prefs = Object.assign({}, userState.prefs, { [k]: v }); scheduleSaveState(); }
+// Thème : 'dark' (par défaut), 'amoled' (ancien réglage userState.amoled) ou 'light'.
+function themeOf() { return prefs().theme || (userState.amoled ? 'amoled' : 'dark'); }
+// Durées de la règle « En cours » (réglables) : après le dernier épisode vu, et après un nouvel épisode non vu.
+const activeDays = () => prefs().activeDays || ACTIVE_DAYS;
+const newEpDays = () => prefs().newEpDays || RECENT_DAYS;
+const fmtDays = (d) => d >= 365 ? '1 an' : d >= 28 ? Math.round(d / 30.5) + ' mois' : Math.round(d / 7) + ' semaine' + (d >= 14 ? 's' : '');
+const isHomeSectionHidden = (sec) => !!(prefs().homeHidden || {})[sec];
+// Rangées d'Explorer dans l'ordre choisi (les inconnues/nouvelles à la fin), sans les rangées masquées.
+function exploreRowOrder() {
+  const ids = EXPLORE_ROWS.map(r => r.id), out = [];
+  for (const id of (prefs().exploreOrder || [])) if (ids.includes(id) && !out.includes(id)) out.push(id);
+  for (const id of ids) if (!out.includes(id)) out.push(id);
+  return out;
+}
+const exploreRowsShown = () => exploreRowOrder().filter(id => !(prefs().exploreHidden || {})[id]).map(id => EXPLORE_ROWS.find(r => r.id === id));
+// Anti-spoiler : titre, image et résumé des épisodes pas encore vus sont floutés (toucher pour afficher).
+const antiSpoiler = () => !!prefs().antiSpoiler;
+function startHash() { const t = prefs().startTab; return '#/' + (START_TABS[t] ? t : 'home'); }
 function applyTheme() {
-  const amoled = !!userState.amoled;
-  document.documentElement.classList.toggle('amoled', amoled);
+  const t = themeOf(), root = document.documentElement, p = prefs();
+  root.classList.toggle('amoled', t === 'amoled');
+  root.classList.toggle('light', t === 'light');
+  const a = ACCENTS[p.accent] || ACCENTS.jaune;
+  root.style.setProperty('--accent', a.c);
+  root.style.setProperty('--accent2', a.c2);
+  root.style.setProperty('--on-accent', a.on);
+  root.style.setProperty('--accent-ink', t === 'light' ? a.ink : a.c); // texte coloré lisible sur fond clair
+  root.style.setProperty('--fs', String(TEXT_SIZES[p.textSize] || 1));
+  root.classList.toggle('poster-s', p.posterSize === 's');
+  root.classList.toggle('poster-l', p.posterSize === 'l');
   // La barre d'état du téléphone (heure/batterie) suit cette couleur.
   const m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.setAttribute('content', amoled ? '#000000' : '#0e1116');
+  if (m) m.setAttribute('content', t === 'amoled' ? '#000000' : t === 'light' ? '#f4f5f7' : '#0e1116');
 }
+
+route('custom', async (el) => {
+  const p = prefs(), t = themeOf();
+  const chip = (name, val, label, cur) => `<button type="button" class="chip ${String(cur) === String(val) ? 'active' : ''}" data-pref="${name}" data-val="${val}">${label}</button>`;
+  const secs = { watching: '▶️ En cours', stale: '🕰️ Pas vu depuis longtemps', notStarted: '🆕 Pas commencée', finished: '✅ Terminée' };
+  el.innerHTML = `
+    ${backBtn('#/profile')}
+    <div class="page-head"><h1>🎨 Personnalisation</h1><span class="sub">Enregistré avec vos données (et dans la sauvegarde en ligne)</span></div>
+    <div class="panel"><h3>Couleur principale</h3>
+      <div class="swatches">${Object.entries(ACCENTS).map(([k, a]) => `<button type="button" class="swatch ${(p.accent || 'jaune') === k ? 'on' : ''}" data-pref="accent" data-val="${k}" style="background:${a.c}" title="${a.label}" aria-label="${a.label}"></button>`).join('')}</div>
+    </div>
+    <div class="panel"><h3>Thème</h3>
+      <div class="chips">${chip('theme', 'dark', '🌙 Sombre', t)}${chip('theme', 'amoled', '⚫ Noir total (AMOLED)', t)}${chip('theme', 'light', '☀️ Clair', t)}</div>
+      <p class="hint" style="color:var(--muted)">« Noir total » économise la batterie sur les écrans OLED.</p>
+    </div>
+    <div class="panel"><h3>Taille du texte</h3>
+      <div class="chips">${chip('textSize', 's', 'Petite', p.textSize || 'm')}${chip('textSize', 'm', 'Normale', p.textSize || 'm')}${chip('textSize', 'l', 'Grande', p.textSize || 'm')}${chip('textSize', 'xl', 'Très grande', p.textSize || 'm')}</div>
+    </div>
+    <div class="panel"><h3>Taille des affiches</h3>
+      <div class="chips">${chip('posterSize', 's', 'Petites', p.posterSize || 'm')}${chip('posterSize', 'm', 'Normales', p.posterSize || 'm')}${chip('posterSize', 'l', 'Grandes', p.posterSize || 'm')}</div>
+      <p class="hint" style="color:var(--muted)">Sur téléphone : 4, 3 ou 2 affiches par ligne.</p>
+    </div>
+    <div class="panel"><h3>Onglet à l'ouverture</h3>
+      <div class="chips">${Object.entries(START_TABS).map(([k, l]) => chip('startTab', k, l, START_TABS[p.startTab] ? p.startTab : 'home')).join('')}</div>
+    </div>
+    <div class="panel"><h3>Sections de la page Séries</h3>
+      <p class="hint" style="color:var(--muted)">Décochez une section pour la masquer (l'ordre se change avec « ↕ Réorganiser » sur la page Séries).</p>
+      ${Object.entries(secs).map(([k, l]) => `<label class="check-row" style="display:flex;gap:10px;cursor:pointer;margin:6px 0"><input type="checkbox" data-sec="${k}" ${isHomeSectionHidden(k) ? '' : 'checked'}><span>${l}</span></label>`).join('')}
+    </div>
+    <div class="panel"><h3>Anti-spoiler</h3>
+      <label class="check-row" style="display:flex;gap:10px;cursor:pointer"><input type="checkbox" id="custSpoil" ${antiSpoiler() ? 'checked' : ''}><span>Flouter le titre, l'image et le résumé des épisodes que je n'ai pas encore vus <span class="hint" style="display:block;color:var(--muted)">Sur la fiche de l'épisode, touchez pour les afficher. Dans la liste des épisodes d'une série, les titres sont floutés.</span></span></label>
+    </div>
+    <div class="panel"><h3>Rangées d'Explorer</h3>
+      <p class="hint" style="color:var(--muted)">Cochez les rangées à afficher et changez leur ordre avec ▲ ▼.</p>
+      <div id="custRows">${exploreRowOrder().map((id, i, arr) => { const r = EXPLORE_ROWS.find(x => x.id === id); return `<div class="cust-row"><label class="check-row" style="display:flex;gap:10px;cursor:pointer;flex:1"><input type="checkbox" data-row="${id}" ${(prefs().exploreHidden || {})[id] ? '' : 'checked'}><span>${esc(r.title)}</span></label><button type="button" class="ord-btn" data-rowmove="up" data-id="${id}" ${i === 0 ? 'disabled' : ''} aria-label="Monter">▲</button><button type="button" class="ord-btn" data-rowmove="down" data-id="${id}" ${i === arr.length - 1 ? 'disabled' : ''} aria-label="Descendre">▼</button></div>`; }).join('')}</div>
+    </div>
+    <div class="panel"><h3>Règle « En cours »</h3>
+      <p class="hint" style="color:var(--muted)">Une série reste « En cours » pendant ce temps après le dernier épisode vu (ou revu) :</p>
+      <div class="chips">${[[30, '1 mois'], [61, '2 mois'], [92, '3 mois'], [183, '6 mois'], [365, '1 an']].map(([v, l]) => chip('activeDays', v, l, activeDays())).join('')}</div>
+      <p class="hint" style="color:var(--muted);margin-top:12px">Quand un nouvel épisode sort et que vous ne l'avez pas encore vu, elle reste « En cours » pendant :</p>
+      <div class="chips">${[[14, '2 semaines'], [31, '1 mois'], [61, '2 mois'], [92, '3 mois']].map(([v, l]) => chip('newEpDays', v, l, newEpDays())).join('')}</div>
+      <p class="hint" style="color:var(--muted);margin-top:12px">Une série épinglée reste toujours « En cours ». Ces durées s'appliquent aussi aux séries en cours visibles par vos amis.</p>
+    </div>
+    <p style="margin-top:6px"><button type="button" class="btn ghost sm" id="custReset">Tout remettre par défaut</button></p>`;
+
+  const refresh = () => { applyTheme(); MODEL = null; render(); };
+  el.querySelectorAll('[data-pref]').forEach(b => b.onclick = () => {
+    const name = b.dataset.pref, num = ['activeDays', 'newEpDays'].includes(name);
+    const val = num ? parseInt(b.dataset.val, 10) : b.dataset.val;
+    setPref(name, val);
+    if (name === 'theme') { userState.amoled = val === 'amoled'; scheduleSaveState(); }
+    refresh();
+  });
+  el.querySelectorAll('[data-sec]').forEach(cb => cb.onchange = () => {
+    const h = Object.assign({}, prefs().homeHidden, { [cb.dataset.sec]: !cb.checked });
+    if (!cb.checked && Object.keys(secs).every(k => h[k])) { cb.checked = true; toast('Gardez au moins une section'); return; }
+    setPref('homeHidden', h);
+    toast(cb.checked ? 'Section affichée' : 'Section masquée');
+  });
+  el.querySelector('#custSpoil').onchange = (e) => { setPref('antiSpoiler', e.target.checked); toast(e.target.checked ? 'Anti-spoiler activé' : 'Anti-spoiler désactivé'); };
+  el.querySelectorAll('[data-row]').forEach(cb => cb.onchange = () => {
+    const h = Object.assign({}, prefs().exploreHidden, { [cb.dataset.row]: !cb.checked });
+    if (!cb.checked && EXPLORE_ROWS.every(r => h[r.id])) { cb.checked = true; toast('Gardez au moins une rangée'); return; }
+    setPref('exploreHidden', h);
+  });
+  el.querySelectorAll('[data-rowmove]').forEach(b => b.onclick = () => {
+    const order = exploreRowOrder(), i = order.indexOf(b.dataset.id), j = b.dataset.rowmove === 'up' ? i - 1 : i + 1;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    setPref('exploreOrder', order);
+    const y = window.scrollY; render(); requestAnimationFrame(() => window.scrollTo(0, y));
+  });
+  el.querySelector('#custReset').onclick = () => {
+    if (!confirm('Remettre toute la personnalisation par défaut ?')) return;
+    userState.prefs = {}; userState.amoled = false; scheduleSaveState(); refresh(); toast('Personnalisation par défaut');
+  };
+});
 
 //////////////////////// Boot ////////////////////////
 (async function boot() {
@@ -5211,7 +5342,7 @@ function applyTheme() {
   if (mergedDup) setTimeout(() => toast(`${mergedDup} film(s) ajouté(s) à la main fusionné(s) avec votre historique`), 1500);
   updateSyncStatus();
   applyTheme();
-  if (!location.hash) location.hash = '#/home';
+  if (!location.hash) location.hash = startHash(); // onglet d'ouverture choisi (Personnalisation)
   render();
   maybeShowChangelogPopup();
   maybeWeeklyBackup();
