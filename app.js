@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 54, date: '8 novembre 2026', title: 'Plus de films en double', items: [
+    'Les films présents plusieurs fois (dans l’historique TV Time lui-même, ajoutés deux fois, ou ajoutés avec exactement le même nom) sont maintenant regroupés en un seul au démarrage.',
+    'Rien n’est perdu : vu, date, revisionnages, réaction, favori, progression, listes et avis sont gardés sur le film restant.',
+  ] },
   { id: 53, date: '8 novembre 2026', title: 'Chances d’aimer plus justes', items: [
     'Vos réactions comptent ainsi : 👎 0 %, 😐 30 %, 👍 60 %, 😮 85 %, 🤩 100 %. Un film ou une série revu compte comme bien aimé.',
     'Les films ont maintenant leur propre calcul, réglé sur vos 764 films : il regarde surtout si vous avez aimé les films proches (la note du public ne prédit presque rien pour vous).',
@@ -5184,47 +5188,87 @@ async function mergeSharedList(parsed) {
 // Replace the in-memory catalogue in place (DATA is a const reference).
 // Films added by hand that are in fact a film of the history (same TMDB id, or same
 // title in either language): move their info onto the history film and drop the copy.
+// Regroupe TOUS les exemplaires d'un même film (historique TV Time, ajouts à la main, listes d'amis…) en un seul :
+// même id TMDB, ou même titre (anglais ou français) avec des années compatibles et sans id TMDB contradictoire.
+// On garde de préférence l'exemplaire de l'historique TV Time et on lui transfère vu / date / revisionnages /
+// réaction / favori / progression / listes / avis des autres. Renvoie le nombre de doublons retirés.
 function reconcileDuplicateMovies() {
-  const cm = userState.customMovies || [];
-  if (!cm.length || !(DATA.movies || []).length) return 0;
+  const data = DATA.movies || [], cm = userState.customMovies || [];
+  const all = data.concat(cm);
+  if (all.length < 2) return 0;
   const idOf = (name) => { const r = (userState.movieTmdb && userState.movieTmdb[name]) || (tmdbCache.movies && tmdbCache.movies[name]); return r && r.id != null ? String(r.id) : null; };
+  const ids = all.map(m => idOf(m.name));
+  const yearOk = (x, y) => { const a = parseInt(movieYear(x), 10), b = parseInt(movieYear(y), 10); return !a || !b || Math.abs(a - b) <= 1; };
+  const parent = all.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const union = (i, j) => { const ri = find(i), rj = find(j); if (ri !== rj) parent[Math.max(ri, rj)] = Math.min(ri, rj); };
   const byId = new Map(), byName = new Map();
-  for (const d of DATA.movies) {
-    const id = idOf(d.name); if (id) byId.set(id, d);
-    byName.set(_normName(d.name), d);
-    const fr = tmdbCache.movies && tmdbCache.movies[d.name] && tmdbCache.movies[d.name].title;
-    if (fr && !byName.has(_normName(fr))) byName.set(_normName(fr), d);
-  }
-  const bag = (k) => (userState[k] = userState[k] || {});
-  let merged = 0;
-  for (const c of cm.slice()) {
-    const cid = idOf(c.name);
-    const d = (cid && byId.get(cid)) || byName.get(_normName(c.name));
-    if (!d || d.name === c.name) continue;
-    const did = idOf(d.name);
-    if (cid && did && cid !== did) continue; // same title, different film (remake…)
-    const cn = c.name, dn = d.name;
-    if (movieStatus(c) === 'watched') {
-      bag('movieStatus')[dn] = 'watched';
-      const cw = userState.movieWatchedAt && userState.movieWatchedAt[cn], dw = movieWatchedOf(d);
-      if (cw && (!dw || cw < dw)) bag('movieWatchedAt')[dn] = cw;
+  all.forEach((m, i) => {
+    if (ids[i]) { if (byId.has(ids[i])) union(byId.get(ids[i]), i); else byId.set(ids[i], i); }
+    const fr = tmdbCache.movies && tmdbCache.movies[m.name] && tmdbCache.movies[m.name].title;
+    for (const n of new Set([m.name, fr].filter(Boolean).map(_normName))) {
+      if (!n) continue;
+      if (!byName.has(n)) { byName.set(n, [i]); continue; }
+      for (const j of byName.get(n)) if ((!ids[i] || !ids[j] || ids[i] === ids[j]) && yearOk(all[j], m)) union(j, i);
+      byName.get(n).push(i);
     }
-    const rw = Math.max(movieRewatchOf(d), movieRewatchOf(c));
-    if (rw > movieRewatchOf(d)) bag('movieRewatch')[dn] = rw;
-    const rd = userState.movieRewatchDates || {};
-    if (rd[cn]) bag('movieRewatchDates')[dn] = [...new Set([...(rd[dn] || []), ...rd[cn]])].sort();
-    if (userState.movieRatings && userState.movieRatings[cn] && !movieRatingOf(d)) bag('movieRatings')[dn] = userState.movieRatings[cn];
-    if (userState.movieEmotions && userState.movieEmotions[cn] && !userState.movieEmotions[dn]) bag('movieEmotions')[dn] = userState.movieEmotions[cn];
-    if (isFavMovie(c)) bag('favMovies')[dn] = true;
-    if (userState.movieProgress && userState.movieProgress[cn] && !userState.movieProgress[dn]) bag('movieProgress')[dn] = userState.movieProgress[cn];
-    if (userState.movieTmdb && userState.movieTmdb[cn] && !idOf(dn)) bag('movieTmdb')[dn] = userState.movieTmdb[cn];
-    for (const l of userState.userLists || []) if (l.movies && l.movies.includes(cn)) l.movies = [...new Set(l.movies.map(x => x === cn ? dn : x))];
-    for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRewatchDates', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb']) if (userState[k]) delete userState[k][cn];
-    cm.splice(cm.indexOf(c), 1);
-    merged++;
+  });
+  const groups = new Map();
+  all.forEach((_, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(i); });
+  const bag = (k) => (userState[k] = userState[k] || {});
+  const drop = new Set();
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const ki = g[0], d = all[ki], dn = d.name; // premier = historique TV Time s'il y en a un
+    for (const i of g.slice(1)) {
+      const c = all[i], cn = c.name;
+      if (ids[i] && ids[ki] && ids[i] !== ids[ki]) continue; // deux films différents (remake…)
+      // Champs de l'export TV Time : on garde le plus complet sur le film restant.
+      if (ki < data.length && i < data.length) {
+        if (c.status === 'watched') d.status = 'watched';
+        if ((+c.rewatchCount || 0) > (+d.rewatchCount || 0)) d.rewatchCount = c.rewatchCount;
+        if (c.watchedAt && (!d.watchedAt || c.watchedAt < d.watchedAt)) d.watchedAt = c.watchedAt;
+        if (!d.rating && c.rating) d.rating = c.rating;
+        if (c.favorited) d.favorited = true;
+      }
+      if (ki < data.length) {
+        if (!d.runtime && c.runtime) d.runtime = c.runtime;
+        if (!movieYear(d) && movieYear(c) && c.releaseDate) d.releaseDate = c.releaseDate;
+      }
+      if (cn === dn) { drop.add(i); continue; } // même nom : les réglages perso sont déjà partagés
+      if (cn !== dn) {
+        if (movieStatus(c) === 'watched') {
+          bag('movieStatus')[dn] = 'watched';
+          const cw = movieWatchedOf(c), dw = movieWatchedOf(d);
+          if (cw && (!dw || cw < dw)) bag('movieWatchedAt')[dn] = cw;
+        }
+        const rw = Math.max(movieRewatchOf(d), movieRewatchOf(c));
+        if (rw > movieRewatchOf(d)) bag('movieRewatch')[dn] = rw;
+        const rd = userState.movieRewatchDates || {};
+        if (rd[cn]) bag('movieRewatchDates')[dn] = [...new Set([...(rd[dn] || []), ...rd[cn]])].sort();
+        if (movieRatingOf(c) && !movieRatingOf(d)) bag('movieRatings')[dn] = movieRatingOf(c);
+        if (movieEmotionOf(c) && !movieEmotionOf(d)) bag('movieEmotions')[dn] = movieEmotionOf(c);
+        if (isFavMovie(c) && !isFavMovie(d)) bag('favMovies')[dn] = true;
+        if (movieProgressOf(c) && !movieProgressOf(d)) bag('movieProgress')[dn] = movieProgressOf(c);
+        if (!ids[ki] && ids[i]) { bag('movieTmdb')[dn] = (userState.movieTmdb && userState.movieTmdb[cn]) || tmdbCache.movies[cn]; ids[ki] = ids[i]; }
+        for (const l of userState.userLists || []) if (l.movies && l.movies.includes(cn)) l.movies = [...new Set(l.movies.map(x => x === cn ? dn : x))];
+        const rv = userState.reviews || {};
+        if (rv['m:' + cn] && !rv['m:' + dn]) { rv['m:' + dn] = rv['m:' + cn]; }
+        if (rv['m:' + cn]) delete rv['m:' + cn];
+        for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRewatchDates', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb']) if (userState[k]) delete userState[k][cn];
+      }
+      drop.add(i);
+    }
   }
-  if (merged) { scheduleSaveState(); MODEL = null; }
-  return merged;
+  if (!drop.size) return 0;
+  const dataDrop = [...drop].filter(i => i < data.length);
+  userState.customMovies = cm.filter((_, j) => !drop.has(data.length + j));
+  if (dataDrop.length) {
+    DATA.movies = data.filter((_, i) => !drop.has(i));
+    persistDataOverride(DATA).catch(() => {}); // l'historique corrigé est gardé sur l'appareil
+  }
+  scheduleSaveState(); MODEL = null;
+  return drop.size;
 }
 function applyDataObject(obj) {
   for (const k of Object.keys(DATA)) delete DATA[k];
