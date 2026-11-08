@@ -11,6 +11,9 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 56, date: '8 novembre 2026', title: 'Vu ou à voir dans Explorer', items: [
+    'Dans Explorer (et les titres similaires, la filmographie des acteurs), « Dans ma liste » est remplacé par l’état réel : ✓ Vu (vert), ▶ En cours (série commencée) ou 🕒 À voir (bleu).',
+  ] },
   { id: 55, date: '8 novembre 2026', title: 'Trier par réaction', items: [
     'Page Films et Bibliothèque (séries et films) : nouveau tri « Réaction », des 🤩 aux 👎 (retouchez pour l’inverse). Les œuvres sans réaction restent à la fin.',
     'Le tri alphabétique des films suit maintenant le titre français affiché.',
@@ -3386,16 +3389,29 @@ async function fillRelated(root, kind, id) {
 
 //////////////////////// Explorer (rechercher de nouvelles œuvres) ////////////////////////
 // Cards of TMDB hits (search results / trends): ✓ if already in the library, ＋ to add, tap = open.
+// État d'une œuvre de ma bibliothèque, pour l'étiquette des affiches (Explorer, similaires, filmographie).
+function ownedState(kind, key) {
+  if (kind === 'tv') {
+    buildModel();
+    const sh = MODEL.shows.get(key);
+    if (!sh || !sh.seenKeys.size) return { cls: 'st-towatch', txt: '🕒 À voir' };
+    return isShowComplete(sh) ? { cls: 'st-seen', txt: '✓ Vue' } : { cls: 'st-watching', txt: '▶ En cours' };
+  }
+  const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === key);
+  return m && movieStatus(m) === 'watched' ? { cls: 'st-seen', txt: '✓ Vu' } : { cls: 'st-towatch', txt: '🕒 À voir' };
+}
+const ownedBadgeHtml = (st) => `<span class="owned-badge ${st.cls}">${st.txt}</span>`;
 function expHitsHtml(hits, ownedKey) {
   return hits.map((h, i) => {
     const name = h.name || h.title || '';
     const date = (h.first_air_date || h.release_date || '').slice(0, 4);
     const badge = h.media_type === 'tv' ? '📺 Série' : '🎬 Film';
     const im = h.poster_path ? `<img loading="lazy" src="${IMG(h.poster_path, 'w185')}" alt="">` : `<div class="fallback-title">${esc(name)}</div>`;
-    const owned = !!ownedKey(h);
-    return `<div class="exp-hit${owned ? ' owned' : ''}" data-open="${i}">
+    const ok = ownedKey(h), owned = !!ok;
+    const st = owned ? ownedState(h.media_type === 'tv' ? 'tv' : 'movie', ok) : null;
+    return `<div class="exp-hit${owned ? ' owned ' + st.cls : ''}" data-open="${i}">
       <div class="ps-poster">${im}<span class="badge-tag">${badge}</span>
-        ${owned ? `<span class="owned-badge">✓ Dans ma liste</span>` : `<button class="exp-add" data-add="${i}" title="Ajouter à mes suivies">＋</button>`}</div>
+        ${owned ? ownedBadgeHtml(st) : `<button class="exp-add" data-add="${i}" title="Ajouter à mes suivies">＋</button>`}</div>
       <div class="ps-name">${esc(name)}${h.sub ? ` <span>· ${esc(h.sub)}</span>` : (date ? ` <span>(${date})</span>` : '')}</div>
     </div>`;
   }).join('');
@@ -3405,8 +3421,8 @@ function wireExpHits(container, hits, ownedKey) {
     ev.stopPropagation();
     const h = hits[parseInt(b.getAttribute('data-add'), 10)];
     if (h.media_type === 'tv') addCustomShow(h); else addCustomMovie(h);
-    b.closest('.exp-hit').classList.add('owned');
-    b.outerHTML = '<span class="owned-badge">✓ Dans ma liste</span>';
+    b.closest('.exp-hit').classList.add('owned', 'st-towatch');
+    b.outerHTML = ownedBadgeHtml({ cls: 'st-towatch', txt: '🕒 À voir' });
   });
   container.querySelectorAll('.exp-hit').forEach(card => card.onclick = () => {
     const h = hits[parseInt(card.getAttribute('data-open'), 10)];
@@ -3827,7 +3843,7 @@ route('person', async (el, rest) => {
       infoRow(f ? 'Décédée' : 'Décédé', p.deathday ? fmtFull(p.deathday) : ''),
     ].join('');
     const ownedKey = ownedLookup();
-    const credits = p.credits.map(c => ({ ...c, owned: ownedKey(c) }))
+    const credits = p.credits.map(c => { const owned = ownedKey(c); return { ...c, owned, st: owned ? ownedState(c.media_type === 'tv' ? 'tv' : 'movie', owned) : null }; })
       .sort((a, b) => (b.owned ? 1 : 0) - (a.owned ? 1 : 0));
     box.innerHTML = `
       <div class="person-hero">
@@ -3845,8 +3861,8 @@ route('person', async (el, rest) => {
         ${infoBlock(rows)}
         ${p.bio ? `<div class="about-block"><h3>Biographie</h3><p class="synopsis-text bio clamp">${esc(p.bio)}</p><button class="btn sm ghost" id="bioMore">Lire la suite</button></div>` : ''}
         ${credits.length ? `<div class="about-block"><h3>Filmographie</h3><div class="ps-grid">${credits.map((c, i) => `
-          <div class="exp-hit${c.owned ? ' owned' : ''}" data-open="${i}">
-            <div class="ps-poster">${c.poster ? `<img loading="lazy" src="${IMG(c.poster, 'w185')}" alt="">` : `<div class="fallback-title">${esc(c.name)}</div>`}<span class="badge-tag">${c.media_type === 'tv' ? '📺 Série' : '🎬 Film'}</span>${c.owned ? `<span class="owned-badge">✓ Ma liste</span>` : ''}</div>
+          <div class="exp-hit${c.owned ? ' owned ' + c.st.cls : ''}" data-open="${i}">
+            <div class="ps-poster">${c.poster ? `<img loading="lazy" src="${IMG(c.poster, 'w185')}" alt="">` : `<div class="fallback-title">${esc(c.name)}</div>`}<span class="badge-tag">${c.media_type === 'tv' ? '📺 Série' : '🎬 Film'}</span>${c.owned ? ownedBadgeHtml(c.st) : ''}</div>
             <div class="ps-name">${esc(c.name)}${c.year ? ` <span>(${c.year})</span>` : ''}</div>
             ${c.character ? `<div class="ps-char">${esc(c.character)}</div>` : ''}
           </div>`).join('')}</div></div>` : ''}
