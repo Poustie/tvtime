@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 52, date: '8 novembre 2026', title: 'Réagir après avoir vu', items: [
+    'On ne peut plus donner sa réaction à un épisode, un film ou une série qu’on n’a pas encore vu : elle reste grisée avec 🔒 jusqu’à « Marquer comme vu ».',
+    'Les « chances d’aimer » utilisent la même échelle pour tout : 👍 Bien compte comme « aimé » partout (avant, une série à 3★ comptait comme mitigée).',
+  ] },
   { id: 51, date: '8 novembre 2026', title: 'Une seule appréciation', items: [
     'Fini les étoiles en plus des réactions : chaque épisode, série ou film a une seule appréciation, « Ma réaction ».',
     'Les 5 réactions vont de 1 à 5 sur 5 : 👎 Pas aimé · 😐 Bof · 👍 Bien · 😮 Waouh · 🤩 Génial. La signification s’affiche à côté.',
@@ -260,23 +264,32 @@ const REACT_SCALE = ['7', '6', '8', '3', '1'].map((id, i) => Object.assign({}, E
 const SCORE_OF_EMO = Object.fromEntries(REACT_SCALE.map(r => [r.id, r.v]));
 const reactOfScore = (v) => REACT_SCALE[v - 1] || null;
 function reactScore(emo, stars) { const n = Math.round(Number(stars) || 0); return SCORE_OF_EMO[emo] || (n >= 1 && n <= 5 ? n : 0); }
-const reactCaption = (v) => { const r = reactOfScore(v); return r ? `${r.emoji} ${esc(r.label)} · <b>${v}/5</b>` : 'De 👎 1/5 (pas aimé) à 🤩 5/5 (génial)'; };
+const REACT_LOCKED_TXT = '🔒 Marquez-le comme vu pour donner votre réaction';
+const reactCaption = (v, locked) => { if (locked) return REACT_LOCKED_TXT; const r = reactOfScore(v); return r ? `${r.emoji} ${esc(r.label)} · <b>${v}/5</b>` : 'De 👎 1/5 (pas aimé) à 🤩 5/5 (génial)'; };
 const reactBadge = (v) => { const r = reactOfScore(v); return r ? r.emoji : ''; };
-function reactPickerHtml(v, cap = true) {
-  return `<span class="react react5">${REACT_SCALE.map(r => `<button type="button" data-v="${r.v}" title="${esc(r.label)} · ${r.v}/5" class="${v === r.v ? 'on' : ''}">${r.emoji}</button>`).join('')}</span>${cap ? `<span class="react-cap">${reactCaption(v)}</span>` : ''}`;
+// locked = œuvre pas encore vue : réaction grisée et impossible à choisir.
+function reactPickerHtml(v, cap = true, locked = false) {
+  return `<span class="react react5${locked ? ' locked' : ''}">${REACT_SCALE.map(r => `<button type="button" data-v="${r.v}" title="${esc(r.label)} · ${r.v}/5" class="${v === r.v ? 'on' : ''}">${r.emoji}</button>`).join('')}</span>${cap ? `<span class="react-cap">${reactCaption(v, locked)}</span>` : ''}`;
 }
 // Appui sur une réaction : la choisir, ou l'enlever si c'était déjà elle.
-function wireReactPicker(box, get, set) {
+function wireReactPicker(box, get, set, canReact) {
   if (!box) return;
   box.addEventListener('click', (ev) => {
     const b = ev.target.closest('.react5 button'); if (!b) return;
     ev.stopPropagation();
+    if (canReact && !canReact()) { toast('Marquez-le comme vu pour donner votre réaction'); return; }
     const v = parseInt(b.dataset.v, 10);
     set(get() === v ? 0 : v);
     const now = get();
     box.querySelectorAll('.react5 button').forEach(x => x.classList.toggle('on', parseInt(x.dataset.v, 10) === now));
     const cap = box.querySelector('.react-cap'); if (cap) cap.innerHTML = reactCaption(now);
   });
+}
+// Après « Marquer comme vu » / « pas vu » sans recharger la page.
+function setReactLocked(box, locked, v) {
+  if (!box) return;
+  const p = box.querySelector('.react5'); if (p) p.classList.toggle('locked', locked);
+  const cap = box.querySelector('.react-cap'); if (cap) cap.innerHTML = reactCaption(v, locked);
 }
 
 //////////////////////// State ////////////////////////
@@ -2067,7 +2080,7 @@ route('movie', async (el, rest) => {
           </div>` : ''}
           <div class="movie-react">
             <span class="react-label">Ma réaction</span>
-            ${reactPickerHtml(movieScore(m))}
+            ${reactPickerHtml(movieScore(m), true, st !== 'watched')}
           </div>
         </div>
       </div>
@@ -2083,7 +2096,7 @@ route('movie', async (el, rest) => {
   wireTabs(el);
   const mRec = (userState.movieTmdb && userState.movieTmdb[name]) || (tmdbCache.movies && tmdbCache.movies[name]);
   wireReviews(el, { lk: 'm:' + m.name, work: reviewWorkMovie((meta && meta.id) || (mRec && mRec.id)), seen: st === 'watched', stars: () => movieScore(m), what: 'le film' });
-  wireReactPicker(el.querySelector('.movie-react'), () => movieScore(m), (v) => { setMovieScore(m, v); _frRevCache.clear(); });
+  wireReactPicker(el.querySelector('.movie-react'), () => movieScore(m), (v) => { setMovieScore(m, v); _frRevCache.clear(); }, () => movieStatus(m) === 'watched');
   wireTrailer(el);
   fillRelated(el, 'movie', (meta && meta.id) || (mRec && mRec.id));
   renderAppreciation(el.querySelector('#apprSlot'), 'movie', meta && meta.id, meta);
@@ -2696,7 +2709,7 @@ route('show', async (el, rest) => {
             <span class="chip">${sh.seenKeys.size} épisode(s) vu(s)${meta && meta.totalEpisodes ? ' / ' + airedTotal(meta) : ''}${meta && meta.totalEpisodes > airedTotal(meta) ? ` · ${meta.totalEpisodes - airedTotal(meta)} à venir` : ''}</span>
             ${isRewatching(sh) ? `<span class="chip">🔁 Revisionnage${(function(){ const p = rewatchPass(sh); return p ? ` ${p.done}/${p.total}` : ''; })()}</span>` : ''}
           </div>
-          <div class="movie-react show-react"><span class="react-label">Ma réaction</span>${reactPickerHtml(showScore(sh))}</div>
+          <div class="movie-react show-react"><span class="react-label">Ma réaction</span>${reactPickerHtml(showScore(sh), true, !sh.seenKeys.size)}</div>
           ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
           <div class="overview">${esc(meta ? meta.overview : '')}</div>
           <div class="detail-actions">
@@ -2722,7 +2735,7 @@ route('show', async (el, rest) => {
     <div class="tab-panel" data-panel="about"><div id="about">${meta ? showAboutHtml(sh, meta) : ''}</div></div>`;
 
   wireTabs(el);
-  wireReactPicker(el.querySelector('.show-react'), () => showScore(sh), (v) => setShowScore(sh, v));
+  wireReactPicker(el.querySelector('.show-react'), () => showScore(sh), (v) => setShowScore(sh, v), () => sh.seenKeys.size > 0);
   wireTrailer(el);
   if (meta) fillRelated(el, 'tv', meta.id);
   el.querySelector('#btnWatch').onclick = () => { toggleWatchlist(sh); render(); };
@@ -2821,7 +2834,7 @@ route('episode', async (el, rest) => {
       </div>
       <div class="ep-react">
         <span class="react-label">Ma réaction</span>
-        ${reactPickerHtml(epScore(k))}
+        ${reactPickerHtml(epScore(k), true, !seen)}
       </div>
     </div>
     ${rows ? `<div class="about" style="margin-top:16px">${infoBlock(rows)}</div>` : ''}
@@ -2837,6 +2850,7 @@ route('episode', async (el, rest) => {
     const b = el.querySelector('#epSeen');
     b.classList.toggle('primary', now); b.textContent = now ? '✓ Vu' : 'Marquer comme vu';
     reviews.setSeen(now);
+    setReactLocked(el.querySelector('.ep-react'), !now, epScore(k));
     updateSyncStatus();
     if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
   };
@@ -2851,7 +2865,7 @@ route('episode', async (el, rest) => {
   };
   const epRwMinus = el.querySelector('#epRwMinus');
   if (epRwMinus) epRwMinus.onclick = () => { setRewatch(sh, season, n, rewatchOf(sh, season, n) - 1); render(); toast('Un visionnage retiré'); };
-  wireReactPicker(el.querySelector('.ep-react'), () => epScore(k), (v) => setEpScore(sh, season, n, v));
+  wireReactPicker(el.querySelector('.ep-react'), () => epScore(k), (v) => setEpScore(sh, season, n, v), () => sh.seenKeys.has(k));
 });
 
 function offlineSeasons(sh) {
@@ -3164,7 +3178,7 @@ function wireEpisodes(container, sh, season, onChange, opts) {
       toastUndo(`🔁 S${String(season).padStart(2, '0')}E${String(n).padStart(2, '0')} : vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); paintRw(); onChange(); });
     };
     onLongPress(rwEl, () => openRewatchStepper(epTitle, () => rewatchOf(sh, season, n), (c) => setRewatch(sh, season, n, c), () => { paintRw(); onChange(); }));
-    wireReactPicker(row, () => epScore(epKey(sh.key, season, n)), (v) => setEpScore(sh, season, n, v));
+    wireReactPicker(row, () => epScore(epKey(sh.key, season, n)), (v) => setEpScore(sh, season, n, v), () => sh.seenKeys.has(epKey(sh.key, season, n)));
     const del = row.querySelector('[data-act="delcustom"]');
     if (del) del.onclick = () => { removeCustomEpisode(sh, season, n); render(); };
     const nameEl = row.querySelector('.epname[data-act="open"]');
@@ -3413,7 +3427,7 @@ async function recoHits(kind) {
 }
 //////////////////////// Indice d'appréciation ////////////////////////
 // How much the user liked a work they've seen: { v: 0..1, w: strength of the evidence 0..1 }.
-const STAR_LIKE = [null, 0, 0.2, 0.5, 0.85, 1];
+const STAR_LIKE = [null, 0, 0.3, 0.8, 0.9, 1]; // réaction 1 à 5 → « aimé » (même valeurs que EMO_LIKE pour 👎 😐 👍 😮 🤩)
 const EMO_LIKE = { '1': 1, '3': 0.9, '8': 0.8, '2': 0.75, '5': 0.7, '4': 0.65, '6': 0.3, '7': 0 };
 function blendLiking(parts) {
   const w = parts.reduce((a, p) => a + p.w, 0);

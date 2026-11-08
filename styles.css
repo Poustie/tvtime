@@ -751,3 +751,7 @@ html.light .detail-hero {
 .react-cap b { color: var(--text); }
 .show-react { margin-top: 10px; }
 .rv-stars { color: var(--text); }
+
+/* Réaction bloquée tant que l'œuvre n'est pas vue */
+.react5.locked button, .ep:not(.seen) .react5 button { opacity: .18; filter: grayscale(1); cursor: not-allowed; }
+.react5.locked button.on, .ep:not(.seen) .react5 button.on { opacity: .45; }
