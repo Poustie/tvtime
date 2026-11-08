@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 49, date: '8 novembre 2026', title: 'Avis entre amis', items: [
+    'En bas de la fiche d’un épisode ou d’un film : « ✍️ Écrire un avis » (modifiable et supprimable).',
+    'Votre avis est gardé dans vos données et, si vous êtes connecté, lisible par vos amis (et seulement eux).',
+    'Juste en dessous : les avis de vos amis. Pour éviter les spoilers, ils ne s’affichent qu’une fois l’épisode ou le film vu.',
+  ] },
   { id: 48, date: '8 novembre 2026', title: 'Personnalisation', items: [
     'Nouveau : Mon compte → 🎨 Personnalisation.',
     'Choisissez la couleur principale de l’application (8 couleurs), le thème (sombre, noir total ou clair), la taille du texte et la taille des affiches.',
@@ -2052,9 +2057,12 @@ route('movie', async (el, rest) => {
       <button class="tab" data-tab="about">À propos</button>
     </div>
     <div class="tab-panel active" data-panel="overview"><div class="synopsis">${esc(meta ? (meta.overview || 'Pas de résumé disponible.') : 'Ajoutez une clé TMDB (Réglages) pour voir les informations du film.')}</div></div>
-    <div class="tab-panel" data-panel="about"><div id="about">${movieAboutHtml(m, meta)}</div></div>`;
+    <div class="tab-panel" data-panel="about"><div id="about">${movieAboutHtml(m, meta)}</div></div>
+    ${reviewsSectionHtml()}`;
 
   wireTabs(el);
+  const mRec = (userState.movieTmdb && userState.movieTmdb[name]) || (tmdbCache.movies && tmdbCache.movies[name]);
+  wireReviews(el, { lk: 'm:' + m.name, work: reviewWorkMovie((meta && meta.id) || (mRec && mRec.id)), seen: st === 'watched', stars: () => movieRatingOf(m) || 0, what: 'le film' });
   el.querySelector('#about')?.addEventListener('click', (ev) => {
     const clr = ev.target.closest('.stars[data-id="aboutMovieRate"] .star-clear');
     const s = ev.target.closest('.stars[data-id="aboutMovieRate"] .s');
@@ -2823,8 +2831,10 @@ route('episode', async (el, rest) => {
       </div>
     </div>
     ${rows ? `<div class="about" style="margin-top:16px">${infoBlock(rows)}</div>` : ''}
-    ${guestsHtml}`;
+    ${guestsHtml}
+    ${reviewsSectionHtml()}`;
 
+  const reviews = wireReviews(el, { lk: k, work: reviewWorkEp(tmdbId, season, n), seen, stars: () => MODEL.ratingMap.get(k) || 0, what: 'l’épisode' });
   el.querySelectorAll('[data-epnav]').forEach(b => b.onclick = () => swipeTo(b.dataset.epnav));
   el.querySelector('#epSeen').onclick = () => {
     const wasComplete = isShowComplete(sh);
@@ -2832,6 +2842,7 @@ route('episode', async (el, rest) => {
     const now = sh.seenKeys.has(k);
     const b = el.querySelector('#epSeen');
     b.classList.toggle('primary', now); b.textContent = now ? '✓ Vu' : 'Marquer comme vu';
+    reviews.setSeen(now);
     updateSyncStatus();
     if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
   };
@@ -4658,6 +4669,7 @@ async function sbMaybePublish() {
   if (!sbSession) return;
   try { if (!sbProfile) await sbLoadProfile(); if (sbProfile && sbProfile.is_public) await sbPublishProfile(false); } catch {}
   if (sbProfile) sbCheckFriendRequests();
+  sbSyncReviews();
 }
 // Photo de profil : recadrée au carré et réduite à 160 px (≈ 10 Ko) avant l'envoi.
 function avatarFromFile(file) {
@@ -4811,6 +4823,116 @@ async function fillAccountProfile(box) {
   }));
   const pb = box.querySelector('#frPublish');
   if (pb) pb.onclick = guard(async () => { await sbPublishProfile(true); render(); toast('Profil publié'); });
+}
+
+//////////////////////// Avis ////////////////////////
+// Mon avis est gardé dans userState.reviews (donc dans les sauvegardes) et, si je suis connecté,
+// envoyé dans la table Supabase « reviews » (script supabase-avis.sql) où seuls mes amis peuvent le lire.
+// Clé partagée entre utilisateurs = identifiants TMDB : « tv:<série>:<saison>:<épisode> » ou « mv:<film> ».
+const REVIEW_MAX = 2000;
+const reviewWorkEp = (tmdbId, se, n) => (tmdbId ? `tv:${tmdbId}:${se}:${n}` : null);
+const reviewWorkMovie = (id) => (id ? `mv:${id}` : null);
+const myReview = (lk) => (userState.reviews || {})[lk] || null;
+function setMyReview(lk, work, text, stars) {
+  const t = String(text || '').trim().slice(0, REVIEW_MAX);
+  const old = myReview(lk);
+  userState.reviews = Object.assign({}, userState.reviews);
+  let dels = (userState.reviewDeletes || []).slice();
+  if (t) {
+    userState.reviews[lk] = { text: t, at: new Date().toISOString(), work: work || null, stars: stars || null, pending: !!work };
+    if (work) dels = dels.filter(x => x !== work);
+  } else {
+    delete userState.reviews[lk];
+    if (old && old.work && !dels.includes(old.work)) dels.push(old.work);
+  }
+  userState.reviewDeletes = dels;
+  scheduleSaveState();
+  return sbSyncReviews();
+}
+// Envoie les avis pas encore en ligne (écrits hors connexion ou avant de se connecter).
+let _revSyncing = false;
+async function sbSyncReviews() {
+  if (!sbSession || _revSyncing) return;
+  _revSyncing = true;
+  try {
+    const me = sbSession.uid, h = { Prefer: 'return=minimal' };
+    for (const work of (userState.reviewDeletes || []).slice()) {
+      await sbApi('reviews?user_id=eq.' + me + '&work=eq.' + encodeURIComponent(work), { method: 'DELETE', headers: h });
+      userState.reviewDeletes = (userState.reviewDeletes || []).filter(x => x !== work);
+      scheduleSaveState();
+    }
+    for (const [lk, r] of Object.entries(userState.reviews || {})) {
+      if (!r || !r.pending || !r.work) continue;
+      await sbApi('reviews?on_conflict=user_id,work', { method: 'POST', json: { user_id: me, work: r.work, body: r.text, stars: r.stars || null, updated_at: r.at }, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } });
+      const cur = myReview(lk);
+      if (cur && cur.at === r.at) { userState.reviews[lk] = Object.assign({}, cur, { pending: false }); scheduleSaveState(); }
+    }
+  } catch {} finally { _revSyncing = false; }
+}
+// Avis des amis sur une œuvre (la sécurité Supabase ne renvoie que ceux de mes amis).
+const _frRevCache = new Map();
+async function sbFriendReviews(work) {
+  const hit = _frRevCache.get(work);
+  if (hit && Date.now() - hit.t < 120000) return hit.v;
+  const rows = (await sbApi('reviews?work=eq.' + encodeURIComponent(work) + '&user_id=neq.' + sbSession.uid + '&select=user_id,body,stars,updated_at&order=updated_at.desc')) || [];
+  const ids = Array.from(new Set(rows.map(r => r.user_id).filter(isUuid)));
+  const profs = ids.length ? ((await sbApi('profiles?id=in.(' + ids.join(',') + ')&select=id,pseudo,avatar')) || []) : [];
+  const byId = new Map(profs.map(p => [p.id, p]));
+  const v = rows.map(r => Object.assign({}, r, { p: byId.get(r.user_id) || { pseudo: 'Ami(e)' } }));
+  _frRevCache.set(work, { t: Date.now(), v });
+  return v;
+}
+const reviewsSectionHtml = () => `<div class="about review-sec" style="margin-top:16px"><div class="about-block" id="myReview"></div><div class="about-block" id="frReviews"></div></div>`;
+// Remplit « Mon avis » et « Avis de mes amis ». o = { lk, work, seen, stars(), what: "l'épisode" | 'le film' }
+function wireReviews(el, o) {
+  const box = el.querySelector('#myReview'), fr = el.querySelector('#frReviews');
+  if (!box || !fr) return { setSeen() {} };
+  const stars = (n) => (n ? `<span class="rv-stars">${'★'.repeat(n)}</span>` : '');
+  const showMine = (editing) => {
+    const r = myReview(o.lk);
+    if (editing) {
+      box.innerHTML = `<h3>Mon avis</h3>
+        <div class="review-edit"><textarea id="rvText" maxlength="${REVIEW_MAX}" placeholder="Qu'avez-vous pensé de ${esc(o.what)} ?">${esc(r ? r.text : '')}</textarea>
+        <div class="rv-count"><span id="rvN">${r ? r.text.length : 0}</span> / ${REVIEW_MAX}</div>
+        <div class="detail-actions"><button class="btn primary" id="rvSave">Enregistrer</button><button class="btn ghost" id="rvCancel">Annuler</button>${r ? '<button class="btn danger" id="rvDel">Supprimer</button>' : ''}</div></div>`;
+      const ta = box.querySelector('#rvText');
+      ta.focus();
+      ta.oninput = () => { box.querySelector('#rvN').textContent = ta.value.length; };
+      box.querySelector('#rvSave').onclick = () => {
+        if (!ta.value.trim()) { toast('Écrivez quelques mots (ou « Annuler »)'); return; }
+        const p = setMyReview(o.lk, o.work, ta.value, o.stars()); showMine(false);
+        Promise.resolve(p).then(() => { if (box.isConnected && !box.querySelector('#rvText')) showMine(false); });
+        toast(o.work && sbSession ? 'Avis enregistré — vos amis peuvent le lire' : 'Avis enregistré');
+      };
+      box.querySelector('#rvCancel').onclick = () => showMine(false);
+      const del = box.querySelector('#rvDel');
+      if (del) del.onclick = () => { if (!confirm('Supprimer mon avis ?')) return; setMyReview(o.lk, o.work, ''); showMine(false); toast('Avis supprimé'); };
+      return;
+    }
+    const note = !o.work ? 'Œuvre non reconnue sur TMDB : avis gardé seulement dans vos données.'
+      : !sbSession ? 'Connectez-vous (Mon compte) pour que vos amis puissent le lire.'
+      : (r && r.pending) ? 'Sera envoyé à vos amis dès que vous serez en ligne.' : '';
+    box.innerHTML = r
+      ? `<h3>Mon avis</h3><p class="review-text">${esc(r.text)}</p><div class="rv-meta">${fmtFull(r.at)}${note ? ' · ' + note : ''}</div><button class="btn sm" id="rvEdit">✏️ Modifier</button>`
+      : `<h3>Mon avis</h3><button class="btn" id="rvEdit">✍️ Écrire un avis</button>${note ? `<div class="rv-meta">${note}</div>` : ''}`;
+    box.querySelector('#rvEdit').onclick = () => showMine(true);
+  };
+  let seen = o.seen;
+  const showFriends = async () => {
+    if (!o.work || !sbSession) { fr.remove(); return; }
+    fr.innerHTML = '<h3>Avis de mes amis</h3><div class="rv-meta">Chargement…</div>';
+    let list;
+    try { list = await sbFriendReviews(o.work); } catch { fr.innerHTML = '<h3>Avis de mes amis</h3><div class="rv-meta">Indisponibles pour le moment.</div>'; return; }
+    if (!list.length) { fr.innerHTML = '<h3>Avis de mes amis</h3><div class="rv-meta">Aucun ami n’a encore donné son avis.</div>'; return; }
+    if (!seen) {
+      fr.innerHTML = `<h3>Avis de mes amis</h3><div class="rv-meta">🙈 ${list.length} avis vous attend${list.length > 1 ? 'ent' : ''} : visible${list.length > 1 ? 's' : ''} une fois que vous aurez vu ${esc(o.what)}.</div>`;
+      return;
+    }
+    fr.innerHTML = '<h3>Avis de mes amis</h3>' + list.map(r => `<div class="fr-review">${avatarHtml(r.p.avatar, r.p.pseudo)}<div class="fr-review-body"><div><a class="who" href="#/friend/${esc(r.user_id)}">${esc(r.p.pseudo)}</a> ${stars(r.stars)} <span class="rv-meta">${fmtFull(r.updated_at)}</span></div><p class="review-text">${esc(r.body)}</p></div></div>`).join('');
+  };
+  showMine(false);
+  showFriends();
+  return { setSeen(v) { if (v !== seen) { seen = v; showFriends(); } } };
 }
 
 route('friends', async (el) => {

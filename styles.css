@@ -729,3 +729,16 @@ html.light .detail-hero {
 .spoil-hint { color: var(--muted); font-size: calc(13px * var(--fs, 1)); margin: 8px 0 4px; cursor: pointer; }
 .cust-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .cust-row:last-child { border-bottom: 0; }
+
+/* Avis (épisodes et films) */
+.review-text { white-space: pre-wrap; margin: 6px 0; line-height: 1.45; overflow-wrap: anywhere; }
+.rv-meta { color: var(--muted); font-size: calc(13px * var(--fs, 1)); margin: 4px 0 8px; }
+.rv-stars { color: var(--accent-ink, var(--accent)); font-size: calc(13px * var(--fs, 1)); }
+.review-edit textarea { width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical; background: var(--bg3); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: inherit; font-size: calc(15px * var(--fs, 1)); }
+.rv-count { text-align: right; color: var(--muted); font-size: calc(12px * var(--fs, 1)); margin: 2px 0 6px; }
+.fr-review { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.fr-review:last-child { border-bottom: 0; }
+.fr-review .avatar { width: 36px; height: 36px; font-size: calc(15px * var(--fs, 1)); }
+.fr-review-body { flex: 1; min-width: 0; }
+.fr-review .who { font-weight: 600; color: var(--text); text-decoration: none; }
+.fr-review .rv-meta { margin: 0; }
