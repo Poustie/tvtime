@@ -742,3 +742,6 @@ html.light .detail-hero {
 .fr-review-body { flex: 1; min-width: 0; }
 .fr-review .who { font-weight: 600; color: var(--text); text-decoration: none; }
 .fr-review .rv-meta { margin: 0; }
+
+/* Titres similaires (À propos) */
+.related-block .exp-row .exp-hit { width: 108px; }

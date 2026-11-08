@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 50, date: '8 novembre 2026', title: 'Titres similaires', items: [
+    'Dans « À propos » d’un film ou d’une série (et dans l’aperçu d’Explorer) : de nouvelles rangées en bas.',
+    'Pour un film qui fait partie d’une saga : tous les autres films de la saga, dans l’ordre de sortie.',
+    'Puis des films ou séries qui ressemblent. « ✓ Dans ma liste » si vous l’avez déjà, ＋ pour l’ajouter, toucher pour l’ouvrir.',
+  ] },
   { id: 49, date: '8 novembre 2026', title: 'Avis entre amis', items: [
     'En bas de la fiche d’un épisode ou d’un film : « ✍️ Écrire un avis » (modifiable et supprimable).',
     'Votre avis est gardé dans vos données et, si vous êtes connecté, lisible par vos amis (et seulement eux).',
@@ -940,7 +945,7 @@ function showAboutHtml(sh, meta) {
     infoRow('Mes visionnages', watchInfo),
     infoRow('Revisionnages', showRewatchHistoryHtml(sh)),
   ].join('');
-  return `<div class="about">${infoBlock(rows)}${providersHtml(meta.providers)}${castHtml(meta.cast)}${trailerHtml(meta.trailer)}</div>`;
+  return `<div class="about">${infoBlock(rows)}${providersHtml(meta.providers)}${castHtml(meta.cast)}${trailerHtml(meta.trailer)}${relatedSlotHtml()}</div>`;
 }
 function movieAboutHtml(m, meta) {
   const rt = (meta && meta.runtime) || m.runtime;
@@ -958,7 +963,7 @@ function movieAboutHtml(m, meta) {
     infoRow('Ma note', starsHtml('aboutMovieRate', movieRatingOf(m))),
     infoRow('Mon visionnage', watchInfo),
   ].join('');
-  return `<div class="about">${infoBlock(rows)}${providersHtml(meta && meta.providers)}${castHtml(meta && meta.cast)}${trailerHtml(meta && meta.trailer)}</div>`;
+  return `<div class="about">${infoBlock(rows)}${providersHtml(meta && meta.providers)}${castHtml(meta && meta.cast)}${trailerHtml(meta && meta.trailer)}${relatedSlotHtml()}</div>`;
 }
 
 //////////////////////// Toggle actions ////////////////////////
@@ -2077,6 +2082,7 @@ route('movie', async (el, rest) => {
     ev.currentTarget.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.e === cur));
   });
   wireTrailer(el);
+  fillRelated(el, 'movie', (meta && meta.id) || (mRec && mRec.id));
   renderAppreciation(el.querySelector('#apprSlot'), 'movie', meta && meta.id, meta);
   el.querySelector('#mToggle').onclick = () => { setMovieStatus(m.name, st === 'watched' ? 'towatch' : 'watched'); toast(st === 'watched' ? 'Remis dans « à voir »' : 'Marqué comme vu'); render(); };
   el.querySelector('#mFav').onclick = () => { toggleFavMovie(m); toast(isFavMovie(m) ? 'Ajouté aux favoris' : 'Retiré des favoris'); render(); };
@@ -2729,6 +2735,7 @@ route('show', async (el, rest) => {
     updateStarsUI(el.querySelectorAll('.stars'), sh.showRating || 0);
   });
   wireTrailer(el);
+  if (meta) fillRelated(el, 'tv', meta.id);
   el.querySelector('#btnWatch').onclick = () => { toggleWatchlist(sh); render(); };
   el.querySelector('#btnFav').onclick = () => { toggleFavShow(sh); toast(isFavShow(sh) ? 'Ajoutée aux favoris' : 'Retirée des favoris'); render(); };
   el.querySelector('#btnAddList').onclick = () => openAddToListModal('tv', sh);
@@ -3343,6 +3350,50 @@ async function renderUpnext(el) {
   });
 }
 
+//////////////////////// Titres similaires (À propos) ////////////////////////
+// Saga (collection TMDB, films seulement, dans l'ordre de sortie) + titres similaires
+// (recommandations TMDB complétées par « similar »). Mis en cache 30 jours.
+async function getRelated(kind, id) {
+  if (!tmdbCache.related) tmdbCache.related = {};
+  const ck = kind + id, cached = tmdbCache.related[ck];
+  if (cached && Date.now() - cached.at < 30 * MS_DAY) return cached;
+  const d = await tmdbFetch(`/${kind}/${id}?append_to_response=recommendations,similar`);
+  let saga = null;
+  const col = kind === 'movie' ? d.belongs_to_collection : null;
+  if (col && col.id) {
+    try {
+      const cd = await tmdbFetch(`/collection/${col.id}`);
+      const parts = (cd.parts || []).filter(p => p.id !== Number(id))
+        .sort((a, b) => (a.release_date || '9999').localeCompare(b.release_date || '9999'));
+      if (parts.length) saga = { name: cd.name || col.name || 'La saga', hits: parts.map(p => slimHit(p, 'movie')) };
+    } catch {}
+  }
+  const skip = new Set([Number(id)].concat(saga ? saga.hits.map(h => h.id) : []));
+  const similar = [];
+  for (const h of ((d.recommendations || {}).results || []).concat((d.similar || {}).results || [])) {
+    if (!h.poster_path || skip.has(h.id)) continue;
+    skip.add(h.id); similar.push(slimHit(h, kind));
+    if (similar.length >= 20) break;
+  }
+  const out = { at: Date.now(), saga, similar };
+  tmdbCache.related[ck] = out; scheduleSaveCache();
+  return out;
+}
+const relatedSlotHtml = () => '<div id="relatedSlot"></div>';
+async function fillRelated(root, kind, id) {
+  const slot = root && root.querySelector('#relatedSlot');
+  if (!slot || !id || !hasKey()) return;
+  let r;
+  try { r = await getRelated(kind, id); } catch { return; }
+  if (!slot.isConnected && !root.isConnected) return;
+  const own = ownedLookup();
+  const blocks = [];
+  if (r.saga && r.saga.hits.length) blocks.push(['🎞️ ' + esc(r.saga.name), r.saga.hits]);
+  if (r.similar.length) blocks.push([kind === 'tv' ? 'Séries similaires' : 'Films similaires', r.similar]);
+  slot.innerHTML = blocks.map(([t, hits]) => `<div class="about-block related-block"><h3>${t}</h3><div class="exp-row">${expHitsHtml(hits, own)}</div></div>`).join('');
+  slot.querySelectorAll('.related-block').forEach((b, i) => wireExpHits(b, blocks[i][1], own));
+}
+
 //////////////////////// Explorer (rechercher de nouvelles œuvres) ////////////////////////
 // Cards of TMDB hits (search results / trends): ✓ if already in the library, ＋ to add, tap = open.
 function expHitsHtml(hits, ownedKey) {
@@ -3655,8 +3706,10 @@ route('preview', async (el, rest) => {
         </div>
         ${meta.seasons.length ? `<div class="pv-seasons">${meta.seasons.map(s => `<span class="chip">Saison ${s.n} · ${s.count} ép.</span>`).join('')}</div>` : ''}
         ${castHtml(meta.cast)}
-        ${trailerHtml(meta.trailer)}`;
+        ${trailerHtml(meta.trailer)}
+        <div class="about">${relatedSlotHtml()}</div>`;
       wireTrailer(pv);
+      fillRelated(pv, 'tv', id);
       renderAppreciation(pv.querySelector('#apprSlot'), 'tv', id, meta);
       pv.querySelector('#pvAdd').onclick = () => { addCustomShow({ id, name: meta.name, poster_path: meta.poster }); replaceRoute('#/show/' + encodeURIComponent('tmdb:' + id)); };
     } else {
@@ -3679,8 +3732,10 @@ route('preview', async (el, rest) => {
           </div>
         </div>
         ${castHtml(meta.cast)}
-        ${trailerHtml(meta.trailer)}`;
+        ${trailerHtml(meta.trailer)}
+        <div class="about">${relatedSlotHtml()}</div>`;
       wireTrailer(pv);
+      fillRelated(pv, 'movie', id);
       renderAppreciation(pv.querySelector('#apprSlot'), 'movie', id, meta);
       pv.querySelector('#pvAdd').onclick = () => { replaceRoute('#/movie/' + encodeURIComponent(addCustomMovie({ id, title: meta.title, release_date: meta.release, poster_path: meta.poster }))); };
     }
