@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 53, date: '8 novembre 2026', title: 'Chances d’aimer plus justes', items: [
+    'Vos réactions comptent ainsi : 👎 0 %, 😐 30 %, 👍 60 %, 😮 85 %, 🤩 100 %. Un film ou une série revu compte comme bien aimé.',
+    'Les films ont maintenant leur propre calcul, réglé sur vos 764 films : il regarde surtout si vous avez aimé les films proches (la note du public ne prédit presque rien pour vous).',
+    'Le calcul des séries est réajusté sur la nouvelle échelle (il était devenu trop optimiste).',
+  ] },
   { id: 52, date: '8 novembre 2026', title: 'Réagir après avoir vu', items: [
     'On ne peut plus donner sa réaction à un épisode, un film ou une série qu’on n’a pas encore vu : elle reste grisée avec 🔒 jusqu’à « Marquer comme vu ».',
     'Les « chances d’aimer » utilisent la même échelle pour tout : 👍 Bien compte comme « aimé » partout (avant, une série à 3★ comptait comme mitigée).',
@@ -3427,8 +3432,8 @@ async function recoHits(kind) {
 }
 //////////////////////// Indice d'appréciation ////////////////////////
 // How much the user liked a work they've seen: { v: 0..1, w: strength of the evidence 0..1 }.
-const STAR_LIKE = [null, 0, 0.3, 0.8, 0.9, 1]; // réaction 1 à 5 → « aimé » (même valeurs que EMO_LIKE pour 👎 😐 👍 😮 🤩)
-const EMO_LIKE = { '1': 1, '3': 0.9, '8': 0.8, '2': 0.75, '5': 0.7, '4': 0.65, '6': 0.3, '7': 0 };
+const STAR_LIKE = [null, 0, 0.3, 0.6, 0.85, 1]; // réaction 1 à 5 → « aimé » (mêmes valeurs que EMO_LIKE pour 👎 😐 👍 😮 🤩)
+const EMO_LIKE = { '1': 1, '3': 0.85, '8': 0.6, '2': 0.75, '5': 0.7, '4': 0.65, '6': 0.3, '7': 0 };
 function blendLiking(parts) {
   const w = parts.reduce((a, p) => a + p.w, 0);
   return w ? { v: parts.reduce((a, p) => a + p.v * p.w, 0) / w, w: Math.min(1, w) } : null;
@@ -3446,6 +3451,7 @@ function showLiking(sh) {
   }
   if (n >= 3) parts.push({ v: sum / n, w: Math.min(0.8, n / 12) });
   if (rewatched) parts.push({ v: 0.95, w: 0.8 });
+  if (rewatched) { const L = blendLiking(parts); return { v: Math.max(0.85, L.v), w: 1 }; } // revue = bien aimée
   const aired = airedTotal(metaFor(sh));
   const prog = aired ? Math.min(1, sh.seenKeys.size / aired) : null;
   if (prog != null) {
@@ -3461,11 +3467,12 @@ function showLiking(sh) {
 function movieLiking(m) {
   if (movieStatus(m) !== 'watched') return null;
   if (isFavMovie(m)) return { v: 1, w: 1 };
-  const e0 = movieEmotionOf(m); if (SCORE_OF_EMO[e0]) return { v: EMO_LIKE[e0], w: 1 }; // réaction de l'échelle 1 à 5
-  if (movieRatingOf(m)) return { v: STAR_LIKE[movieRatingOf(m)], w: 1 };
+  const rw = movieRewatchOf(m) > 0; // film revu = bien aimé (au moins 85 %)
+  const e0 = movieEmotionOf(m); if (SCORE_OF_EMO[e0]) return { v: rw ? Math.max(0.85, EMO_LIKE[e0]) : EMO_LIKE[e0], w: 1 }; // réaction de l'échelle 1 à 5
+  if (movieRatingOf(m)) return { v: rw ? Math.max(0.85, STAR_LIKE[movieRatingOf(m)]) : STAR_LIKE[movieRatingOf(m)], w: 1 };
   const parts = [];
   const e = movieEmotionOf(m); if (e in EMO_LIKE) parts.push({ v: EMO_LIKE[e], w: 0.8 });
-  if (movieRewatchOf(m) > 0) parts.push({ v: 0.9, w: 0.7 });
+  if (rw) return { v: Math.max(0.85, (blendLiking(parts) || { v: 0.9 }).v), w: 1 };
   if (!parts.length) parts.push({ v: 0.6, w: 0.2 }); // watched to the end, no opinion given
   return blendLiking(parts);
 }
@@ -3505,46 +3512,58 @@ async function getNeighbors(kind, id) {
   scheduleSaveCache();
   return list;
 }
-// Model tuned on the user's own series history (leave-one-out test, 307 series: AUC 0.70;
-// calibration: ~90 % announced -> 92 % actually liked, < 60 % -> 48 %).
-const LIKE_MODEL = {
-  a: 1.489, b: 0.226,
-  w: { pub: 2, genre: 1, top10: 2 },
-  st: { pub: [0.7905, 0.1830], genre: [0.7324, 0.0172], top10: [0.2228, 0.1855] },
-};
-// Estimated chance (0..1) that the user likes a work. `exclude` = id ignored (testing on the history).
-async function predictLiking(kind, id, genres, vote, idx, exclude) {
+// Indices d'une œuvre pour l'estimation « chances d'aimer » (exclude = id ignoré, pour les tests sur l'historique).
+async function likingFeatures(kind, id, genres, vote, idx, exclude) {
   idx = idx || likingIndex();
   const lib = idx[kind];
   let gSum = 0, gW = 0;
   for (const [lid, L] of lib) if (lid !== exclude) { gSum += L.v * L.w; gW += L.w; }
   const globalMean = gW ? gSum / gW : 0.6;
-  // 1. similar works: how many of the closest ones you've watched, and liked
-  let top10 = 0, seenN = 0; const liked = [], disliked = [];
+  // 1. œuvres proches : combien des 10 plus proches vous avez vues, et à quel point vous avez aimé celles vues (20 plus proches)
+  let top10 = 0, seenN = 0, nbS = 0, nbW = 0; const liked = [], disliked = [];
   const neigh = await getNeighbors(kind, id);
   neigh.forEach(([nid], i) => {
     if (nid === exclude) return;
     const L = lib.get(nid); if (!L) return;
     seenN++; if (i < 10) top10++;
+    if (i < 20) { nbS += L.v * L.w; nbW += L.w; }
     if (L.v >= 0.7) liked.push(L.name); else if (L.v <= 0.35) disliked.push(L.name);
   });
-  // 2. genre affinity (shrunk toward the user's average when a genre has little data)
+  const nbLike = (nbS + 2 * globalMean) / (nbW + 2); // rapproché de votre moyenne quand peu d'œuvres proches sont vues
+  // 2. affinité de genres (rapprochée de votre moyenne quand un genre a peu de données)
   const gStats = {};
   for (const [lid, L] of lib) {
     if (lid === exclude) continue;
-    for (const g of L.genres) { const s = gStats[g] || (gStats[g] = { s: 0, w: 0 }); s.s += L.v * L.w; s.w += L.w; }
+    for (const g of L.genres) { const st = gStats[g] || (gStats[g] = { s: 0, w: 0 }); st.s += L.v * L.w; st.w += L.w; }
   }
   const gAff = (genres || []).filter(g => gStats[g]).map(g => (gStats[g].s + 2 * globalMean) / (gStats[g].w + 2));
   const genre = gAff.length ? gAff.reduce((a, b) => a + b, 0) / gAff.length : globalMean;
-  // 3. public opinion
+  // 3. avis du public
   const pub = vote ? Math.max(0, Math.min(1, (vote - 5) / 3.5)) : 0.5;
-  const f = { pub, genre, top10: top10 / 10 };
-  const M = LIKE_MODEL;
-  const s = Object.keys(M.w).reduce((t, k) => t + M.w[k] * (f[k] - M.st[k][0]) / M.st[k][1], 0);
-  const v = 1 / (1 + Math.exp(-(M.a + M.b * s)));
-  const evidence = (top10 >= 3 ? 1 : 0) + (vote ? 1 : 0) + (gAff.length ? 1 : 0);
-  return { v, pct: Math.max(5, Math.min(95, Math.round(v * 100))), conf: evidence >= 3 ? 'élevée' : (evidence === 2 || seenN >= 2) ? 'moyenne' : 'faible',
-    liked: liked.slice(0, 3), disliked: disliked.slice(0, 2) };
+  return { f: { pub, genre, top10: top10 / 10, nbLike }, evidence: (top10 >= 3 ? 1 : 0) + (vote ? 1 : 0) + (gAff.length ? 1 : 0), seenN, liked, disliked };
+}
+// Modèles réglés sur votre propre historique (un par type), testés en cachant chaque œuvre à tour de rôle (5 groupes).
+// Probabilité = 1 / (1 + e^-(a + Σ c × (indice − moyenne) / écart)).
+// Séries (311 avec un avis assez clair) : capacité à classer aimée/pas aimée 0,68 ; annoncé 70-80 % → 77 % en moyenne, < 60 % → 54 %.
+//   L'indice « œuvres proches aimées » n'aide pas pour les séries.
+// Films (764 vus ; aucun « pas aimé » dans l'historique, donc « aimé » = revu, favori ou 😮/🤩 contre « vu une fois sans avis ») :
+//   capacité 0,68 (ancien modèle séries : 0,63) ; annoncé 60-70 % → 68 %, 70-80 % → 74 %, 80-90 % → 82 %.
+//   La note du public ne prédit presque rien pour les films ; les films proches que vous avez aimés comptent le plus.
+const LIKE_MODELS = {
+  tv: { a: 0.925, c: { pub: 0.298, genre: 0.135, top10: 0.217 }, st: { pub: [0.7911, 0.1829], genre: [0.7288, 0.0182], top10: [0.2412, 0.1962] } },
+  movie: { a: 1.026, c: { pub: 0.023, genre: 0.061, top10: 0.119, nbLike: 0.151 }, st: { pub: [0.5878, 0.2010], genre: [0.8371, 0.0175], top10: [0.2661, 0.2672], nbLike: [0.8433, 0.0271] } },
+};
+function likingProb(kind, f) {
+  const M = LIKE_MODELS[kind] || LIKE_MODELS.tv;
+  const z = Object.keys(M.c).reduce((t, k) => t + M.c[k] * (f[k] - M.st[k][0]) / M.st[k][1], M.a);
+  return 1 / (1 + Math.exp(-z));
+}
+// Estimated chance (0..1) that the user likes a work.
+async function predictLiking(kind, id, genres, vote, idx, exclude) {
+  const F = await likingFeatures(kind, id, genres, vote, idx, exclude);
+  const v = likingProb(kind, F.f);
+  return { v, pct: Math.max(5, Math.min(95, Math.round(v * 100))), conf: F.evidence >= 3 ? 'élevée' : (F.evidence === 2 || F.seenN >= 2) ? 'moyenne' : 'faible',
+    liked: F.liked.slice(0, 3), disliked: F.disliked.slice(0, 2) };
 }
 function appreciationHtml(p) {
   const cls = p.pct >= 75 ? 'hi' : p.pct >= 55 ? 'mid' : 'lo';
