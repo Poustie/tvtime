@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 55, date: '8 novembre 2026', title: 'Trier par réaction', items: [
+    'Page Films et Bibliothèque (séries et films) : nouveau tri « Réaction », des 🤩 aux 👎 (retouchez pour l’inverse). Les œuvres sans réaction restent à la fin.',
+    'Le tri alphabétique des films suit maintenant le titre français affiché.',
+  ] },
   { id: 54, date: '8 novembre 2026', title: 'Plus de films en double', items: [
     'Les films présents plusieurs fois (dans l’historique TV Time lui-même, ajoutés deux fois, ou ajoutés avec exactement le même nom) sont maintenant regroupés en un seul au démarrage.',
     'Rien n’est perdu : vu, date, revisionnages, réaction, favori, progression, listes et avis sont gardés sur le film restant.',
@@ -1974,22 +1978,32 @@ const LIB_SORTERS_SHOW = {
   za: (a, b) => displayName(b).localeCompare(displayName(a)),
   recent: (a, b) => String(showAddedAt(b)).localeCompare(String(showAddedAt(a))) || displayName(a).localeCompare(displayName(b)),
   old: (a, b) => String(showAddedAt(a)).localeCompare(String(showAddedAt(b))) || displayName(a).localeCompare(displayName(b)),
+  best: (a, b) => byScore(showScore(a), showScore(b), true) || displayName(a).localeCompare(displayName(b)),
+  worst: (a, b) => byScore(showScore(a), showScore(b), false) || displayName(a).localeCompare(displayName(b)),
 };
+// Tri par réaction (1 à 5) : les œuvres sans réaction restent toujours à la fin.
+function byScore(x, y, bestFirst) { if (!x !== !y) return x ? -1 : 1; return bestFirst ? y - x : x - y; }
+const movieSortName = (m) => movieDisplayName(m); // tri sur le titre affiché (français)
 const LIB_SORTERS_MOVIE = {
-  az: (a, b) => a.name.localeCompare(b.name),
-  za: (a, b) => b.name.localeCompare(a.name),
-  recent: (a, b) => String(movieAddedAt(b)).localeCompare(String(movieAddedAt(a))) || a.name.localeCompare(b.name),
-  old: (a, b) => String(movieAddedAt(a)).localeCompare(String(movieAddedAt(b))) || a.name.localeCompare(b.name),
+  az: (a, b) => movieSortName(a).localeCompare(movieSortName(b)),
+  za: (a, b) => movieSortName(b).localeCompare(movieSortName(a)),
+  recent: (a, b) => String(movieAddedAt(b)).localeCompare(String(movieAddedAt(a))) || movieSortName(a).localeCompare(movieSortName(b)),
+  old: (a, b) => String(movieAddedAt(a)).localeCompare(String(movieAddedAt(b))) || movieSortName(a).localeCompare(movieSortName(b)),
+  best: (a, b) => byScore(movieScore(a), movieScore(b), true) || movieSortName(a).localeCompare(movieSortName(b)),
+  worst: (a, b) => byScore(movieScore(a), movieScore(b), false) || movieSortName(a).localeCompare(movieSortName(b)),
 };
-// Two-toggle sort bar: "Alphabétique" and "Ajout récent" ; re-clicking the active one reverses it.
+// Barre de tri : « Alphabétique », « Ajout récent », « Ma réaction » ; retoucher le tri actif l'inverse.
 function sortChipsHtml(cur) {
   const alpha = (cur === 'az' || cur === 'za');
   const recent = (cur === 'recent' || cur === 'old');
+  const score = (cur === 'best' || cur === 'worst');
   return `<span class="chip ${alpha ? 'active' : ''}" data-sort="alpha">Alphabétique${alpha ? (cur === 'za' ? ' ↑' : ' ↓') : ''}</span>` +
-         `<span class="chip ${recent ? 'active' : ''}" data-sort="recent">Ajout récent${recent ? (cur === 'old' ? ' ↑' : ' ↓') : ''}</span>`;
+         `<span class="chip ${recent ? 'active' : ''}" data-sort="recent">Ajout récent${recent ? (cur === 'old' ? ' ↑' : ' ↓') : ''}</span>` +
+         `<span class="chip ${score ? 'active' : ''}" data-sort="score" title="Mieux notés d'abord ; retoucher pour l'inverse">Réaction${score ? (cur === 'worst' ? ' ↑' : ' ↓') : ''}</span>`;
 }
 function nextSort(cur, which) {
   if (which === 'alpha') return cur === 'az' ? 'za' : 'az';
+  if (which === 'score') return cur === 'best' ? 'worst' : 'best';
   return cur === 'recent' ? 'old' : 'recent';
 }
 
