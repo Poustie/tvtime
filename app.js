@@ -11,6 +11,12 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 51, date: '8 novembre 2026', title: 'Une seule appréciation', items: [
+    'Fini les étoiles en plus des réactions : chaque épisode, série ou film a une seule appréciation, « Ma réaction ».',
+    'Les 5 réactions vont de 1 à 5 sur 5 : 👎 Pas aimé · 😐 Bof · 👍 Bien · 😮 Waouh · 🤩 Génial. La signification s’affiche à côté.',
+    'Vos anciennes notes en étoiles s’affichent comme la réaction de même valeur. « Ma note » a disparu de « À propos ».',
+    'Les séries ont aussi leur réaction (en haut de la fiche) et les affiches de films montrent la vôtre.',
+  ] },
   { id: 50, date: '8 novembre 2026', title: 'Titres similaires', items: [
     'Dans « À propos » d’un film ou d’une série (et dans l’aperçu d’Explorer) : de nouvelles rangées en bas.',
     'Pour un film qui fait partie d’une saga : tous les autres films de la saga, dans l’ordre de sortie.',
@@ -248,6 +254,30 @@ const EMOTIONS = [
   { id: '5', emoji: '😱', label: 'Choqué' },
 ];
 const EMOTION_BY_ID = Object.fromEntries(EMOTIONS.map(e => [e.id, e]));
+// Une seule appréciation par œuvre : 5 réactions rangées de 1 à 5 sur 5.
+// Réaction et note restent enregistrées ensemble (synchronisées) : une ancienne note ★ s'affiche comme la réaction de même valeur.
+const REACT_SCALE = ['7', '6', '8', '3', '1'].map((id, i) => Object.assign({}, EMOTION_BY_ID[id], { v: i + 1 }));
+const SCORE_OF_EMO = Object.fromEntries(REACT_SCALE.map(r => [r.id, r.v]));
+const reactOfScore = (v) => REACT_SCALE[v - 1] || null;
+function reactScore(emo, stars) { const n = Math.round(Number(stars) || 0); return SCORE_OF_EMO[emo] || (n >= 1 && n <= 5 ? n : 0); }
+const reactCaption = (v) => { const r = reactOfScore(v); return r ? `${r.emoji} ${esc(r.label)} · <b>${v}/5</b>` : 'De 👎 1/5 (pas aimé) à 🤩 5/5 (génial)'; };
+const reactBadge = (v) => { const r = reactOfScore(v); return r ? r.emoji : ''; };
+function reactPickerHtml(v, cap = true) {
+  return `<span class="react react5">${REACT_SCALE.map(r => `<button type="button" data-v="${r.v}" title="${esc(r.label)} · ${r.v}/5" class="${v === r.v ? 'on' : ''}">${r.emoji}</button>`).join('')}</span>${cap ? `<span class="react-cap">${reactCaption(v)}</span>` : ''}`;
+}
+// Appui sur une réaction : la choisir, ou l'enlever si c'était déjà elle.
+function wireReactPicker(box, get, set) {
+  if (!box) return;
+  box.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.react5 button'); if (!b) return;
+    ev.stopPropagation();
+    const v = parseInt(b.dataset.v, 10);
+    set(get() === v ? 0 : v);
+    const now = get();
+    box.querySelectorAll('.react5 button').forEach(x => x.classList.toggle('on', parseInt(x.dataset.v, 10) === now));
+    const cap = box.querySelector('.react-cap'); if (cap) cap.innerHTML = reactCaption(now);
+  });
+}
 
 //////////////////////// State ////////////////////////
 // userState = durable user edits (persisted to userdata.json)
@@ -731,20 +761,18 @@ function movieRatingOf(m) {
   const n = parseInt(o, 10);
   return isFinite(n) ? Math.max(0, Math.min(5, n)) : 0;
 }
-function setMovieRating(name, rating) {
-  if (!userState.movieRatings) userState.movieRatings = {};
-  userState.movieRatings[name] = rating;
-  scheduleSaveState();
-}
 function movieEmotionOf(m) {
   const o = userState.movieEmotions && userState.movieEmotions[m.name];
   if (o !== undefined) return o || null; // '' = réaction effacée
   return (m.rating != null && m.rating !== '') ? String(m.rating) : null; // import TV Time
 }
-function setMovieEmotion(m, emotionId) {
+const movieScore = (m) => reactScore(movieEmotionOf(m), movieRatingOf(m));
+function setMovieScore(m, v) {
+  const r = reactOfScore(v);
   if (!userState.movieEmotions) userState.movieEmotions = {};
-  const cur = movieEmotionOf(m);
-  userState.movieEmotions[m.name] = (cur === emotionId) ? '' : emotionId;
+  if (!userState.movieRatings) userState.movieRatings = {};
+  userState.movieEmotions[m.name] = r ? r.id : '';
+  userState.movieRatings[m.name] = r ? v : 0;
   scheduleSaveState();
 }
 function movieWatchedOf(m) {
@@ -941,7 +969,6 @@ function showAboutHtml(sh, meta) {
     infoRow('Statut', meta.status ? esc(statusFr(meta.status)) : ''),
     infoRow('Épisodes', meta.totalEpisodes ? `${sh.seenKeys.size} vus / ${airedTotal(meta)}${meta.totalEpisodes > airedTotal(meta) ? ` (+${meta.totalEpisodes - airedTotal(meta)} à venir)` : ''}` : (sh.seenKeys.size ? `${sh.seenKeys.size} vus` : '')),
     infoRow('Note du public', meta.vote ? `⭐ ${meta.vote.toFixed(1)}/10 <span class="muted">(${meta.voteCount})</span>` : ''),
-    infoRow('Ma note', starsHtml('aboutShowRate', sh.showRating || 0)),
     infoRow('Mes visionnages', watchInfo),
     infoRow('Revisionnages', showRewatchHistoryHtml(sh)),
   ].join('');
@@ -960,7 +987,6 @@ function movieAboutHtml(m, meta) {
     infoRow('Durée', rt ? `${Math.floor(rt / 60)}h${String(rt % 60).padStart(2, '0')}` : ''),
     infoRow('Note du public', meta && meta.vote ? `⭐ ${meta.vote.toFixed(1)}/10 <span class="muted">(${meta.voteCount})</span>` : ''),
     infoRow('Reprise', movieProgressOf(m) ? `${Math.floor(movieProgressOf(m) / 60)}h${String(movieProgressOf(m) % 60).padStart(2, '0')}` + (rt ? ` / ${Math.floor(rt / 60)}h${String(rt % 60).padStart(2, '0')}` : '') + ' vues' : ''),
-    infoRow('Ma note', starsHtml('aboutMovieRate', movieRatingOf(m))),
     infoRow('Mon visionnage', watchInfo),
   ].join('');
   return `<div class="about">${infoBlock(rows)}${providersHtml(meta && meta.providers)}${castHtml(meta && meta.cast)}${trailerHtml(meta && meta.trailer)}${relatedSlotHtml()}</div>`;
@@ -990,25 +1016,15 @@ function toggleSeen(sh, season, number, seen) {
 function computeSeenCount() {
   let c = 0; for (const sh of MODEL.shows.values()) c += sh.seenKeys.size; return c;
 }
-function setRating(sh, season, number, rating) {
-  const k = epKey(sh.key, season, number);
-  const cur = MODEL.ratingMap.get(k);
-  if (cur === rating) { MODEL.ratingMap.delete(k); userState.ratings[k] = 0; }
-  else { MODEL.ratingMap.set(k, rating); userState.ratings[k] = rating; }
+const epScore = (k) => reactScore(MODEL.emotionMap.get(k), MODEL.ratingMap.get(k));
+function setEpScore(sh, season, number, v) {
+  const k = epKey(sh.key, season, number), r = reactOfScore(v);
+  if (r) { MODEL.emotionMap.set(k, r.id); MODEL.ratingMap.set(k, v); userState.emotions[k] = r.id; userState.ratings[k] = v; }
+  else { MODEL.emotionMap.delete(k); MODEL.ratingMap.delete(k); userState.emotions[k] = ''; userState.ratings[k] = 0; }
   scheduleSaveState();
 }
-function setEmotion(sh, season, number, emotionId) {
-  const k = epKey(sh.key, season, number);
-  const cur = MODEL.emotionMap.get(k);
-  if (cur === emotionId) { MODEL.emotionMap.delete(k); userState.emotions[k] = ''; }
-  else { MODEL.emotionMap.set(k, emotionId); userState.emotions[k] = emotionId; }
-  scheduleSaveState();
-}
-function setShowRating(sh, rating) {
-  sh.showRating = (sh.showRating === rating) ? null : rating;
-  userState.showRatings[sh.key] = sh.showRating || 0;
-  scheduleSaveState();
-}
+const showScore = (sh) => reactScore(null, sh.showRating);
+function setShowScore(sh, v) { sh.showRating = v || null; userState.showRatings[sh.key] = v || 0; scheduleSaveState(); }
 // Rewatch counts (number of *extra* views beyond the first). Total views = count + 1.
 function rewatchOf(sh, season, number) {
   return MODEL.rewatchMap.get(epKey(sh.key, season, number)) || 0;
@@ -2028,7 +2044,6 @@ route('movie', async (el, rest) => {
           <div class="tags">
             <span class="chip">${st === 'watched' ? '✓ Vu' : '🎬 À voir'}</span>
             ${st === 'watched' && rw > 0 ? `<span class="chip">🔁 ${rw + 1} visionnages</span>` : ''}
-            ${movieRatingOf(m) ? `<span class="chip">${'★'.repeat(movieRatingOf(m))}</span>` : ''}
           </div>
           ${st !== 'watched' && meta && meta.id ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
           <div class="detail-actions">
@@ -2052,7 +2067,7 @@ route('movie', async (el, rest) => {
           </div>` : ''}
           <div class="movie-react">
             <span class="react-label">Ma réaction</span>
-            <div class="react" data-act="memo">${EMOTIONS.slice(0, 5).map(em => `<button data-e="${em.id}" title="${em.label}" class="${movieEmotionOf(m) === em.id ? 'on' : ''}">${em.emoji}</button>`).join('')}</div>
+            ${reactPickerHtml(movieScore(m))}
           </div>
         </div>
       </div>
@@ -2067,20 +2082,8 @@ route('movie', async (el, rest) => {
 
   wireTabs(el);
   const mRec = (userState.movieTmdb && userState.movieTmdb[name]) || (tmdbCache.movies && tmdbCache.movies[name]);
-  wireReviews(el, { lk: 'm:' + m.name, work: reviewWorkMovie((meta && meta.id) || (mRec && mRec.id)), seen: st === 'watched', stars: () => movieRatingOf(m) || 0, what: 'le film' });
-  el.querySelector('#about')?.addEventListener('click', (ev) => {
-    const clr = ev.target.closest('.stars[data-id="aboutMovieRate"] .star-clear');
-    const s = ev.target.closest('.stars[data-id="aboutMovieRate"] .s');
-    if (!clr && !s) return;
-    setMovieRating(m.name, clr ? 0 : parseInt(s.dataset.v, 10));
-    updateStarsUI((clr || s).closest('.stars'), movieRatingOf(m));
-  });
-  el.querySelector('.movie-react .react[data-act="memo"]')?.addEventListener('click', (ev) => {
-    const b = ev.target.closest('button'); if (!b) return;
-    setMovieEmotion(m, b.dataset.e);
-    const cur = movieEmotionOf(m);
-    ev.currentTarget.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.e === cur));
-  });
+  wireReviews(el, { lk: 'm:' + m.name, work: reviewWorkMovie((meta && meta.id) || (mRec && mRec.id)), seen: st === 'watched', stars: () => movieScore(m), what: 'le film' });
+  wireReactPicker(el.querySelector('.movie-react'), () => movieScore(m), (v) => { setMovieScore(m, v); _frRevCache.clear(); });
   wireTrailer(el);
   fillRelated(el, 'movie', (meta && meta.id) || (mRec && mRec.id));
   renderAppreciation(el.querySelector('#apprSlot'), 'movie', meta && meta.id, meta);
@@ -2115,7 +2118,7 @@ function movieCardHtml(m) {
   const btn = st === 'watched'
     ? `<button class="card-arch" data-movie="${esc(m.name)}" data-to="towatch" title="Remettre dans « à voir »">↩</button>`
     : `<button class="card-arch" data-movie="${esc(m.name)}" data-to="watched" title="Marquer comme vu">✓</button>`;
-  const rating = movieRatingOf(m) ? `<span class="badge-tag">${'★'.repeat(movieRatingOf(m))}</span>` : '';
+  const rating = movieScore(m) ? `<span class="badge-tag" title="Ma réaction">${reactBadge(movieScore(m))}</span>` : '';
   const rw = movieRewatchOf(m);
   const rwBadge = (st === 'watched' && rw > 0) ? `<span class="badge-count">×${rw + 1}</span>` : '';
   const rwBtn = st === 'watched'
@@ -2692,8 +2695,8 @@ route('show', async (el, rest) => {
           <div class="tags">
             <span class="chip">${sh.seenKeys.size} épisode(s) vu(s)${meta && meta.totalEpisodes ? ' / ' + airedTotal(meta) : ''}${meta && meta.totalEpisodes > airedTotal(meta) ? ` · ${meta.totalEpisodes - airedTotal(meta)} à venir` : ''}</span>
             ${isRewatching(sh) ? `<span class="chip">🔁 Revisionnage${(function(){ const p = rewatchPass(sh); return p ? ` ${p.done}/${p.total}` : ''; })()}</span>` : ''}
-            ${starsHtml('showrate', sh.showRating || 0)}
           </div>
+          <div class="movie-react show-react"><span class="react-label">Ma réaction</span>${reactPickerHtml(showScore(sh))}</div>
           ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
           <div class="overview">${esc(meta ? meta.overview : '')}</div>
           <div class="detail-actions">
@@ -2719,21 +2722,7 @@ route('show', async (el, rest) => {
     <div class="tab-panel" data-panel="about"><div id="about">${meta ? showAboutHtml(sh, meta) : ''}</div></div>`;
 
   wireTabs(el);
-  // show rating stars
-  el.querySelector('.detail-hero .stars')?.addEventListener('click', (ev) => {
-    const clr = ev.target.closest('.star-clear');
-    const s = ev.target.closest('.s');
-    if (!clr && !s) return;
-    setShowRating(sh, clr ? 0 : parseInt(s.dataset.v, 10));
-    updateStarsUI(el.querySelectorAll('.stars'), sh.showRating || 0);
-  });
-  el.querySelector('#about')?.addEventListener('click', (ev) => {
-    const clr = ev.target.closest('.stars[data-id="aboutShowRate"] .star-clear');
-    const s = ev.target.closest('.stars[data-id="aboutShowRate"] .s');
-    if (!clr && !s) return;
-    setShowRating(sh, clr ? 0 : parseInt(s.dataset.v, 10));
-    updateStarsUI(el.querySelectorAll('.stars'), sh.showRating || 0);
-  });
+  wireReactPicker(el.querySelector('.show-react'), () => showScore(sh), (v) => setShowScore(sh, v));
   wireTrailer(el);
   if (meta) fillRelated(el, 'tv', meta.id);
   el.querySelector('#btnWatch').onclick = () => { toggleWatchlist(sh); render(); };
@@ -2831,17 +2820,15 @@ route('episode', async (el, rest) => {
         ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
       </div>
       <div class="ep-react">
-        <span class="react-label">Ma note</span>
-        <div class="stars" data-id="epRate">${[1, 2, 3, 4, 5].map(v => `<span class="s ${v <= rating ? 'on' : ''}" data-v="${v}">★</span>`).join('')}<button type="button" class="star-clear" title="Retirer ma note"${rating > 0 ? '' : ' hidden'}>✕</button></div>
         <span class="react-label">Ma réaction</span>
-        <div class="react" data-act="emo">${EMOTIONS.slice(0, 5).map(em => `<button data-e="${em.id}" title="${esc(em.label)}" class="${emo === em.id ? 'on' : ''}">${em.emoji}</button>`).join('')}</div>
+        ${reactPickerHtml(epScore(k))}
       </div>
     </div>
     ${rows ? `<div class="about" style="margin-top:16px">${infoBlock(rows)}</div>` : ''}
     ${guestsHtml}
     ${reviewsSectionHtml()}`;
 
-  const reviews = wireReviews(el, { lk: k, work: reviewWorkEp(tmdbId, season, n), seen, stars: () => MODEL.ratingMap.get(k) || 0, what: 'l’épisode' });
+  const reviews = wireReviews(el, { lk: k, work: reviewWorkEp(tmdbId, season, n), seen, stars: () => epScore(k), what: 'l’épisode' });
   el.querySelectorAll('[data-epnav]').forEach(b => b.onclick = () => swipeTo(b.dataset.epnav));
   el.querySelector('#epSeen').onclick = () => {
     const wasComplete = isShowComplete(sh);
@@ -2864,18 +2851,7 @@ route('episode', async (el, rest) => {
   };
   const epRwMinus = el.querySelector('#epRwMinus');
   if (epRwMinus) epRwMinus.onclick = () => { setRewatch(sh, season, n, rewatchOf(sh, season, n) - 1); render(); toast('Un visionnage retiré'); };
-  el.querySelector('.stars[data-id="epRate"]').addEventListener('click', (ev) => {
-    const clr = ev.target.closest('.star-clear'); const s = ev.target.closest('.s');
-    if (!clr && !s) return;
-    setRating(sh, season, n, clr ? 0 : parseInt(s.dataset.v, 10));
-    updateStarsUI(el.querySelector('.stars[data-id="epRate"]'), MODEL.ratingMap.get(k) || 0);
-  });
-  el.querySelector('.ep-react .react[data-act="emo"]').addEventListener('click', (ev) => {
-    const btn = ev.target.closest('button'); if (!btn) return;
-    setEmotion(sh, season, n, btn.dataset.e);
-    const cur = MODEL.emotionMap.get(k);
-    ev.currentTarget.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.e === cur));
-  });
+  wireReactPicker(el.querySelector('.ep-react'), () => epScore(k), (v) => setEpScore(sh, season, n, v));
 });
 
 function offlineSeasons(sh) {
@@ -3080,8 +3056,7 @@ function epHtml(sh, season, e, pass) {
     <div class="num">${season}×${String(e.n).padStart(2, '0')}</div>
     <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + e.n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
     <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Visionnages — appui : +1 · appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
-    <div class="stars" data-act="rate">${[1, 2, 3, 4, 5].map(v => `<span class="s ${v <= rating ? 'on' : ''}" data-v="${v}">★</span>`).join('')}<button type="button" class="star-clear" title="Retirer ma note"${rating > 0 ? '' : ' hidden'}>✕</button></div>
-    <div class="react" data-act="emo">${EMOTIONS.slice(0, 5).map(em => `<button data-e="${em.id}" title="${em.label}" class="${emo === em.id ? 'on' : ''}">${em.emoji}</button>`).join('')}</div>
+    ${reactPickerHtml(epScore(k), false)}
     ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">🗑</button>` : ''}
   </div>`;
 }
@@ -3120,7 +3095,7 @@ function celebrateCompletion(sh) {
         <div class="cel-stat"><b>${watchTime}</b><span>de visionnage</span></div>
         ${spanTxt ? `<div class="cel-stat"><b>${spanTxt}</b><span>pour la terminer</span></div>` : (seasons ? `<div class="cel-stat"><b>${seasons}</b><span>saison(s)</span></div>` : '')}
       </div>
-      ${wd.first ? `<p class="cel-msg">Du ${fmtFull(wd.first)} au ${fmtFull(wd.last)}${rating ? ` · Ta note : ${'★'.repeat(rating)}` : ''}</p>` : ''}
+      ${wd.first ? `<p class="cel-msg">Du ${fmtFull(wd.first)} au ${fmtFull(wd.last)}${showScore(sh) ? ` · Ta réaction : ${reactCaption(showScore(sh))}` : ''}</p>` : ''}
       <button class="btn primary" data-close>🎊 Génial !</button>
     </div>`, (root) => { runConfetti(root.querySelector('.confetti-cv')); });
 }
@@ -3189,22 +3164,7 @@ function wireEpisodes(container, sh, season, onChange, opts) {
       toastUndo(`🔁 S${String(season).padStart(2, '0')}E${String(n).padStart(2, '0')} : vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); paintRw(); onChange(); });
     };
     onLongPress(rwEl, () => openRewatchStepper(epTitle, () => rewatchOf(sh, season, n), (c) => setRewatch(sh, season, n, c), () => { paintRw(); onChange(); }));
-    row.querySelector('[data-act="rate"]').onclick = (ev) => {
-      const clr = ev.target.closest('.star-clear');
-      const s = ev.target.closest('.s');
-      if (!clr && !s) return;
-      setRating(sh, season, n, clr ? 0 : parseInt(s.dataset.v, 10));
-      const r = MODEL.ratingMap.get(epKey(sh.key, season, n)) || 0;
-      const w = row.querySelector('.stars[data-act="rate"]');
-      w.querySelectorAll('.s').forEach(x => x.classList.toggle('on', parseInt(x.dataset.v, 10) <= r));
-      const cb = w.querySelector('.star-clear'); if (cb) cb.hidden = !(r > 0);
-    };
-    row.querySelector('[data-act="emo"]').onclick = (ev) => {
-      const b = ev.target.closest('button'); if (!b) return;
-      setEmotion(sh, season, n, b.dataset.e);
-      const cur = MODEL.emotionMap.get(epKey(sh.key, season, n));
-      row.querySelectorAll('.react button').forEach(x => x.classList.toggle('on', x.dataset.e === cur));
-    };
+    wireReactPicker(row, () => epScore(epKey(sh.key, season, n)), (v) => setEpScore(sh, season, n, v));
     const del = row.querySelector('[data-act="delcustom"]');
     if (del) del.onclick = () => { removeCustomEpisode(sh, season, n); render(); };
     const nameEl = row.querySelector('.epname[data-act="open"]');
@@ -3289,13 +3249,6 @@ function markSeasonPrompt(sh, meta, tmdbId) {
     });
 }
 
-function starsHtml(id, val) {
-  return `<span class="stars" data-id="${id}">${[1, 2, 3, 4, 5].map(v => `<span class="s ${v <= val ? 'on' : ''}" data-v="${v}">★</span>`).join('')}<button type="button" class="star-clear" title="Retirer ma note"${val > 0 ? '' : ' hidden'}>✕</button></span>`;
-}
-function updateStarsUI(target, val) {
-  const list = (target && typeof target.forEach === 'function' && !(target instanceof Element)) ? target : [target];
-  for (const c of list) { if (!c) continue; c.querySelectorAll('.s').forEach((s) => s.classList.toggle('on', parseInt(s.dataset.v, 10) <= val)); const clr = c.querySelector('.star-clear'); if (clr) clr.hidden = !(val > 0); }
-}
 
 //////////////////////// Up Next ////////////////////////
 // Legacy #/upnext link -> now a tab inside the Séries page.
@@ -3439,7 +3392,7 @@ function recoSeeds(kind) {
     return pool.map(s => ({ id: s.forcedTmdb || (s.tvdbId != null ? tmdbCache.map[s.tvdbId] : null), name: displayName(s) })).filter(x => x.id).slice(0, 5);
   }
   const movies = (DATA.movies || []).concat(userState.customMovies || []).filter(m => movieStatus(m) === 'watched');
-  const loved = movies.filter(m => isFavMovie(m) || movieRatingOf(m) >= 4);
+  const loved = movies.filter(m => isFavMovie(m) || movieScore(m) >= 4);
   const pool = (loved.length >= 3 ? loved : movies).sort((a, b) => String(movieWatchedOf(b) || '').localeCompare(String(movieWatchedOf(a) || '')));
   const idOf = (m) => { const r = (userState.movieTmdb && userState.movieTmdb[m.name]) || (tmdbCache.movies && tmdbCache.movies[m.name]); return r && r.id; };
   return pool.map(m => ({ id: idOf(m), name: m.name })).filter(x => x.id).slice(0, 5);
@@ -3473,8 +3426,8 @@ function showLiking(sh) {
   const parts = [];
   let sum = 0, n = 0, rewatched = false;
   for (const k of sh.seenKeys) {
-    const r = MODEL.ratingMap.get(k); if (r) { sum += STAR_LIKE[r]; n++; }
-    const e = MODEL.emotionMap.get(k); if (e in EMO_LIKE) { sum += EMO_LIKE[e]; n++; }
+    const e = MODEL.emotionMap.get(k); // réaction (et sinon ancienne note ★), comptée une seule fois
+    if (e in EMO_LIKE) { sum += EMO_LIKE[e]; n++; } else { const r = MODEL.ratingMap.get(k); if (r) { sum += STAR_LIKE[r]; n++; } }
     if (MODEL.rewatchMap.get(k) > 0) rewatched = true;
   }
   if (n >= 3) parts.push({ v: sum / n, w: Math.min(0.8, n / 12) });
@@ -3494,6 +3447,7 @@ function showLiking(sh) {
 function movieLiking(m) {
   if (movieStatus(m) !== 'watched') return null;
   if (isFavMovie(m)) return { v: 1, w: 1 };
+  const e0 = movieEmotionOf(m); if (SCORE_OF_EMO[e0]) return { v: EMO_LIKE[e0], w: 1 }; // réaction de l'échelle 1 à 5
   if (movieRatingOf(m)) return { v: STAR_LIKE[movieRatingOf(m)], w: 1 };
   const parts = [];
   const e = movieEmotionOf(m); if (e in EMO_LIKE) parts.push({ v: EMO_LIKE[e], w: 0.8 });
@@ -4002,7 +3956,7 @@ route('stats', async (el) => {
   for (const [id, c] of Object.entries(movEmoCounts)) if (!knownEmoIdsMov.has(id)) movOtherReactions += c;
   const movEmoTotal = Object.values(movEmoCounts).reduce((a, b) => a + b, 0);
   const movMyRatingCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  for (const m of allMovies) { const r = movieRatingOf(m); if (r >= 1 && r <= 5) movMyRatingCounts[r]++; }
+  for (const m of allMovies) { const r = movieScore(m); if (r >= 1 && r <= 5) movMyRatingCounts[r]++; }
   const myRatedMovies = Object.values(movMyRatingCounts).reduce((a, b) => a + b, 0);
   const movByYear = {};
   for (const m of moviesWatched) { const y = (movieWatchedOf(m) || '').slice(0, 4); if (y) movByYear[y] = (movByYear[y] || 0) + 1; }
@@ -4032,9 +3986,9 @@ route('stats', async (el) => {
         return (rows + other) || '<p class="hint">Aucune réaction.</p>';
       })()}
     </div>
-    <div class="panel"><h3>⭐ Mes notes</h3>
-      <p class="hint" style="color:var(--muted);margin:.2rem 0 .6rem">Vos notes personnelles (1 à 5 ★), différentes des réactions. Notez une série depuis sa fiche pour l'ajouter ici.</p>
-      ${ratedShows ? [5, 4, 3, 2, 1].map(v => barRow('★'.repeat(v), showRatingCounts[v], Math.max(1, ...Object.values(showRatingCounts)))).join('') : '<p class="hint">Aucune note pour l\'instant.</p>'}
+    <div class="panel"><h3>🎯 Mes appréciations</h3>
+      <p class="hint" style="color:var(--muted);margin:.2rem 0 .6rem">Votre réaction sur la fiche de chaque série, de 👎 1/5 à 🤩 5/5.</p>
+      ${ratedShows ? [5, 4, 3, 2, 1].map(v => barRow(`${reactOfScore(v).emoji} ${reactOfScore(v).label} · ${v}/5`, showRatingCounts[v], Math.max(1, ...Object.values(showRatingCounts)))).join('') : '<p class="hint">Aucune note pour l\'instant.</p>'}
     </div>
     <div class="panel"><h3>📅 Activité par année</h3>
       ${years.map(y => barRow(y, byYear[y], Math.max(...years.map(z => byYear[z])))).join('') || '<p class="hint">—</p>'}
@@ -4056,9 +4010,9 @@ route('stats', async (el) => {
         return (rows + other) || '<p class="hint">Aucune réaction.</p>';
       })()}
     </div>
-    <div class="panel"><h3>⭐ Mes notes</h3>
-      <p class="hint" style="color:var(--muted);margin:.2rem 0 .6rem">Vos notes personnelles (1 à 5 ★), différentes des réactions. Notez un film depuis sa fiche (« Ma note ») pour l'ajouter ici.</p>
-      ${myRatedMovies ? [5, 4, 3, 2, 1].map(v => barRow('★'.repeat(v), movMyRatingCounts[v], Math.max(1, ...Object.values(movMyRatingCounts)))).join('') : '<p class="hint">Aucune note pour l\'instant.</p>'}
+    <div class="panel"><h3>🎯 Mes appréciations</h3>
+      <p class="hint" style="color:var(--muted);margin:.2rem 0 .6rem">Votre réaction sur la fiche de chaque film (y compris celles importées de TV Time), de 👎 1/5 à 🤩 5/5.</p>
+      ${myRatedMovies ? [5, 4, 3, 2, 1].map(v => barRow(`${reactOfScore(v).emoji} ${reactOfScore(v).label} · ${v}/5`, movMyRatingCounts[v], Math.max(1, ...Object.values(movMyRatingCounts)))).join('') : '<p class="hint">Aucune note pour l\'instant.</p>'}
     </div>
     <div class="panel"><h3>📅 Films vus par année</h3>
       ${movYears.length ? movYears.map(y => barRow(y, movByYear[y], Math.max(...movYears.map(z => movByYear[z])))).join('') : '<p class="hint">Les dates de visionnage sont enregistrées à partir de maintenant, quand vous marquez un film comme vu.</p>'}
@@ -4942,7 +4896,7 @@ const reviewsSectionHtml = () => `<div class="about review-sec" style="margin-to
 function wireReviews(el, o) {
   const box = el.querySelector('#myReview'), fr = el.querySelector('#frReviews');
   if (!box || !fr) return { setSeen() {} };
-  const stars = (n) => (n ? `<span class="rv-stars">${'★'.repeat(n)}</span>` : '');
+  const stars = (n) => { const r = reactOfScore(n); return r ? `<span class="rv-stars" title="${esc(r.label)}">${r.emoji} ${n}/5</span>` : ''; };
   const showMine = (editing) => {
     const r = myReview(o.lk);
     if (editing) {

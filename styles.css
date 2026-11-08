@@ -745,3 +745,9 @@ html.light .detail-hero {
 
 /* Titres similaires (À propos) */
 .related-block .exp-row .exp-hit { width: 108px; }
+
+/* Une seule appréciation : réactions 1 à 5 */
+.react-cap { color: var(--muted); font-size: calc(13px * var(--fs, 1)); }
+.react-cap b { color: var(--text); }
+.show-react { margin-top: 10px; }
+.rv-stars { color: var(--text); }
