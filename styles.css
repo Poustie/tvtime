@@ -762,3 +762,19 @@ html.light .detail-hero {
 /* Réaction bloquée tant que l'œuvre n'est pas vue */
 .react5.locked button, .ep:not(.seen) .react5 button { opacity: .18; filter: grayscale(1); cursor: not-allowed; }
 .react5.locked button.on, .ep:not(.seen) .react5 button.on { opacity: .45; }
+
+/* Anti-spoiler : plus de flou dès que l'épisode est vu */
+.ep.seen .spoil-name { filter: none; }
+/* Genres : menu de la Bibliothèque et rangée d'Explorer */
+.genre-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -6px 0 16px; }
+.genre-bar select { max-width: 100%; padding: 8px 12px; border-radius: 10px; font-size: calc(13px * var(--fs, 1)); }
+.exp-genres { margin: -4px 0 18px; }
+.genre-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.genre-title { font-weight: 700; font-size: calc(15px * var(--fs, 1)); margin-right: auto; }
+.genre-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; touch-action: pan-x pan-y; }
+.genre-chips::-webkit-scrollbar { display: none; }
+.genre-chips .chip { flex: none; white-space: nowrap; }
+.genre-res-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.genre-res-head h2 { margin: 0 auto 0 0; font-size: calc(17px * var(--fs, 1)); }
+.genre-results .pill-tabs { margin-bottom: 12px; }
+.genre-more { text-align: center; margin: 16px 0 8px; }

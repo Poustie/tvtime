@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 58, date: '9 novembre 2026', title: 'Chercher par genre', items: [
+    'Explorer : nouvelle rangée « 🎭 Par genre ». Choisissez Séries ou Films puis un genre (Comédie, Science-Fiction, Animation…) : les titres s’affichent en grille, du plus populaire, du mieux noté ou du plus récent, avec « Voir plus ».',
+    'Bibliothèque : un menu « Genre » sous les onglets permet de n’afficher que les séries ou films d’un genre (avec le nombre d’œuvres). Pour les films, les genres sont récupérés une seule fois la première fois (quelques secondes).',
+    'Anti-spoiler : quand on marque un épisode comme vu, son titre, son image et son résumé se défloutent tout de suite.',
+  ] },
   { id: 57, date: '9 novembre 2026', title: 'La page ne remonte plus', items: [
     'Quand on touche une option (Personnalisation, réactions, vu / pas vu…), la page reste là où on était au lieu de remonter tout en haut. Partout dans l’app.',
     'Dans Explorer, les affiches ont les 4 coins arrondis et le cadre vert (vu) ou bleu (à voir) suit l’arrondi tout autour.',
@@ -2306,7 +2311,71 @@ async function hydrateMoviePosters(container, list) {
 
 
 //////////////////////// Library view ////////////////////////
-let libFilter = { q: '', kind: 'series', tab: 'following', movieTab: 'all', sort: 'az' };
+let libFilter = { q: '', kind: 'series', tab: 'following', movieTab: 'all', sort: 'az', genre: '', movieGenre: '' };
+// ---------- Genres (filtres de la Bibliothèque et d'Explorer) ----------
+function showGenres(sh) { const m = metaFor(sh); return (m && m.genres) || []; }
+function movieTmdbRec(m) { return (userState.movieTmdb && userState.movieTmdb[m.name]) || (tmdbCache.movies && tmdbCache.movies[m.name]) || null; }
+function movieGenres(m) {
+  const r = movieTmdbRec(m); if (!r || !r.id) return [];
+  const mm = tmdbCache.movieMeta && tmdbCache.movieMeta[r.id];
+  if (mm && mm.genres && mm.genres.length) return mm.genres;
+  return (tmdbCache.movieGenres && tmdbCache.movieGenres[r.id]) || [];
+}
+// Films dont on ne connaît pas encore les genres : demandés une seule fois à TMDB, puis gardés dans le cache.
+let _mgFill = null;
+function fillMovieGenres(movies, onProgress) {
+  if (_mgFill) return _mgFill;
+  if (!hasKey()) return null;
+  if (!tmdbCache.movieGenres) tmdbCache.movieGenres = {};
+  const ids = [...new Set(movies.map(m => { const r = movieTmdbRec(m); return r && r.id; })
+    .filter(id => id && !tmdbCache.movieGenres[id] && !(tmdbCache.movieMeta && tmdbCache.movieMeta[id] && tmdbCache.movieMeta[id].genres)))];
+  if (!ids.length) return null;
+  const total = ids.length; let done = 0;
+  const worker = async () => {
+    while (ids.length) {
+      const id = ids.shift();
+      try { const d = await tmdbFetch(`/movie/${id}`); tmdbCache.movieGenres[id] = (d.genres || []).map(g => g.name); } catch {}
+      done++;
+      if (done % 25 === 0) { scheduleSaveCache(); if (onProgress) onProgress(done, total); }
+    }
+  };
+  _mgFill = Promise.all([1, 2, 3, 4, 5].map(worker))
+    .then(() => { _mgFill = null; scheduleSaveCache(); if (onProgress) onProgress(total, total); })
+    .finally(() => { _mgFill = null; });
+  return _mgFill;
+}
+// Menu « Genre » : genres présents dans la liste, avec leur nombre d'œuvres.
+function genreOptionsHtml(items, genresOf, cur) {
+  const cnt = new Map();
+  for (const it of items) for (const g of genresOf(it)) cnt.set(g, (cnt.get(g) || 0) + 1);
+  if (cur && !cnt.has(cur)) cnt.set(cur, 0);
+  const list = [...cnt].sort((a, b) => a[0].localeCompare(b[0], 'fr'));
+  return `<option value="">🎭 Tous les genres</option>` + list.map(([g, n]) => `<option value="${esc(g)}"${g === cur ? ' selected' : ''}>${esc(g)} (${n})</option>`).join('');
+}
+// Explorer : liste des genres TMDB (gardée 30 jours) et recherche « par genre ».
+async function tmdbGenreList(kind) {
+  const c = tmdbCache.genreLists || (tmdbCache.genreLists = {});
+  const e = c[kind];
+  if (e && Date.now() - e.at < 30 * 86400e3) return e.list;
+  const r = await tmdbFetch(`/genre/${kind}/list`);
+  const list = (r.genres || []).filter(g => g.id !== 10767 && g.id !== 10763); // sans talk-shows ni infos
+  c[kind] = { at: Date.now(), list }; scheduleSaveCache();
+  return list;
+}
+const GENRE_SORTS = [['pop', 'Populaires'], ['top', 'Mieux notés'], ['new', 'Récents']];
+// « Mieux notés » : beaucoup de votes exigés (sinon des nouveautés notées par leurs seuls fans passent devant) ; low = seuil réduit pour les petits genres.
+function discoverPath(kind, gid, sort, page, low) {
+  const today = new Date().toISOString().slice(0, 10);
+  const dateF = kind === 'tv' ? 'first_air_date' : 'primary_release_date';
+  let q = `/discover/${kind}?with_genres=${gid}&page=${page}&include_adult=false`;
+  if (kind === 'tv') q += '&without_genres=10767,10763';
+  if (sort === 'top') q += `&sort_by=vote_average.desc&vote_count.gte=${low ? (kind === 'tv' ? 50 : 100) : (kind === 'tv' ? 1000 : 3000)}`;
+  else if (sort === 'new') q += `&sort_by=${dateF}.desc&${dateF}.lte=${today}&vote_count.gte=${kind === 'tv' ? 10 : 30}`;
+  else q += '&sort_by=popularity.desc';
+  return q;
+}
+let exploreGenreKind = 'tv'; // Séries ou Films dans « Par genre »
+let exploreGenre = null;     // genre choisi dans Explorer { kind, id, name, sort } (gardé au retour d'un aperçu)
 route('library', async (el) => {
   buildModel();
   const shows = Array.from(MODEL.shows.values());
@@ -2325,6 +2394,7 @@ route('library', async (el) => {
       <span class="chip ${libFilter.kind === 'movie' ? 'active' : ''}" data-kind="movie">🎬 Films</span>
     </div>
     <div class="pill-tabs" id="libTabs"></div>
+    <div class="genre-bar"><select class="input" id="libGenre" aria-label="Genre"></select><span class="sub" id="libGenreNote"></span></div>
     <div class="grid" id="libGrid"></div>`;
 
   const seriesTabs = [
@@ -2369,12 +2439,23 @@ route('library', async (el) => {
   }
   drawSort();
 
+  const genreSel = el.querySelector('#libGenre'), genreNote = el.querySelector('#libGenreNote');
+  genreSel.onchange = (e) => { libFilter[libFilter.kind === 'movie' ? 'movieGenre' : 'genre'] = e.target.value; drawLib(); };
   function drawLib() {
     const grid = el.querySelector('#libGrid');
     const q = libFilter.q.trim().toLowerCase();
     if (libFilter.kind === 'movie') {
       const pred = movieTabs.find(t => t[0] === libFilter.movieTab)[2];
       let list = allMovies.filter(pred);
+      genreSel.innerHTML = genreOptionsHtml(list, movieGenres, libFilter.movieGenre);
+      // Genres des films pas encore connus : récupérés en arrière-plan (une seule fois).
+      const fill = fillMovieGenres(allMovies, (d, t) => {
+        if (!grid.isConnected) return;
+        genreNote.textContent = d < t ? `Genres des films : ${d}/${t}…` : '';
+        if (d >= t && libFilter.kind === 'movie') drawLib();
+      });
+      if (fill && !genreNote.textContent) genreNote.textContent = 'Récupération des genres des films…';
+      if (libFilter.movieGenre) list = list.filter(m => movieGenres(m).includes(libFilter.movieGenre));
       if (q) list = list.filter(m => ((m.name || '') + ' ' + movieDisplayName(m)).toLowerCase().includes(q));
       list.sort(LIB_SORTERS_MOVIE[libFilter.sort] || LIB_SORTERS_MOVIE.az);
       el.querySelector('#libCount').textContent = `${list.length} film(s)`;
@@ -2385,6 +2466,9 @@ route('library', async (el) => {
     } else {
       const pred = seriesTabs.find(t => t[0] === libFilter.tab)[2];
       let list = shows.filter(pred);
+      genreNote.textContent = '';
+      genreSel.innerHTML = genreOptionsHtml(list, showGenres, libFilter.genre);
+      if (libFilter.genre) list = list.filter(sh => showGenres(sh).includes(libFilter.genre));
       if (q) list = list.filter(s => searchNames(s).some(n => n.includes(q)));
       list.sort(LIB_SORTERS_SHOW[libFilter.sort] || LIB_SORTERS_SHOW.az);
       el.querySelector('#libCount').textContent = `${list.length} série(s)`;
@@ -2646,7 +2730,7 @@ document.addEventListener('touchstart', (e) => {
   _sw = null;
   if (_swBusy || e.touches.length !== 1) return;
   const t = e.target;
-  if (t.closest && t.closest('.cast-list, .exp-row, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
+  if (t.closest && t.closest('.cast-list, .exp-row, .genre-chips, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
   if (document.getElementById('modalRoot') && document.getElementById('modalRoot').children.length) return;
   const nb = swipeNeighbors(); if (!nb) return;
   const x = e.touches[0].clientX, y = e.touches[0].clientY;
@@ -2887,6 +2971,7 @@ route('episode', async (el, rest) => {
     const b = el.querySelector('#epSeen');
     b.classList.toggle('primary', now); b.textContent = now ? '✓ Vu' : 'Marquer comme vu';
     reviews.setSeen(now);
+    if (now) revealSpoil(); // épisode vu : plus rien à cacher
     setReactLocked(el.querySelector('.ep-react'), !now, epScore(k));
     updateSyncStatus();
     if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
@@ -3663,6 +3748,7 @@ route('explore', async (el) => {
   el.innerHTML = `
     <div class="page-head"><h1>🧭 Explorer</h1>${acctBtn()}<span class="sub">Rechercher de nouvelles séries et films à ajouter</span></div>
     ${hasKey() ? `<div class="explore-search"><input class="input" id="expQ" placeholder="Rechercher une série ou un film…" autocomplete="off"></div>
+    <div class="exp-genres" id="expGenres"></div>
     <div id="expResults" class="explore-results"></div>`
       : needKeyHtml("L'exploration a besoin d'une clé TMDB pour rechercher des séries et des films.")}`;
   if (!hasKey()) return;
@@ -3687,10 +3773,69 @@ route('explore', async (el) => {
       wireExpHits(row, hits, ownedKey);
     }));
   };
+  // Par genre : Séries / Films + un bouton par genre ; toucher un genre affiche ses titres en grille.
+  const genresEl = el.querySelector('#expGenres');
+  const paintGenreChips = () => genresEl.querySelectorAll('[data-gid]').forEach(ch => ch.classList.toggle('active',
+    !!exploreGenre && exploreGenre.kind === exploreGenreKind && exploreGenre.id === Number(ch.dataset.gid)));
+  const drawGenres = async () => {
+    const kind = exploreGenreKind;
+    let list = [];
+    try { list = await tmdbGenreList(kind); } catch {}
+    if (kind !== exploreGenreKind) return;
+    genresEl.innerHTML = `<div class="genre-head"><span class="genre-title">🎭 Par genre</span>
+      <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">📺 Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">🎬 Films</span></div>
+      <div class="genre-chips">${list.map(g => `<span class="chip" data-gid="${g.id}">${esc(g.name)}</span>`).join('')}</div>`;
+    paintGenreChips();
+    genresEl.querySelectorAll('[data-gk]').forEach(ch => ch.onclick = () => {
+      if (exploreGenreKind === ch.dataset.gk) return;
+      exploreGenreKind = ch.dataset.gk;
+      const had = !!exploreGenre; exploreGenre = null;
+      drawGenres(); if (had) doSearch();
+    });
+    genresEl.querySelectorAll('[data-gid]').forEach(ch => ch.onclick = () => {
+      const id = Number(ch.dataset.gid);
+      const same = exploreGenre && exploreGenre.kind === kind && exploreGenre.id === id;
+      exploreGenre = same ? null : { kind, id, name: ch.textContent, sort: (exploreGenre && exploreGenre.sort) || 'pop' };
+      input.value = ''; exploreQuery = '';
+      paintGenreChips(); doSearch();
+      if (!same) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+  const showGenre = async () => {
+    const tok = ++rowsTok, g = exploreGenre;
+    let page = 1, hits = [];
+    results.innerHTML = `<div class="genre-results">
+      <div class="genre-res-head"><h2>${esc(g.name)} · ${g.kind === 'tv' ? 'Séries' : 'Films'}</h2><span class="chip" id="genreClose" title="Revenir à Explorer">✕ Fermer</span></div>
+      <div class="pill-tabs" id="genreSort">${GENRE_SORTS.map(([k, l]) => `<span class="chip ${g.sort === k ? 'active' : ''}" data-gs="${k}">${l}</span>`).join('')}</div>
+      <div class="ps-grid" id="genreGrid"><div class="loading">Chargement…</div></div>
+      <div class="genre-more"><button class="btn" id="genreMore" hidden>Voir plus</button></div></div>`;
+    const grid = results.querySelector('#genreGrid'), more = results.querySelector('#genreMore');
+    results.querySelector('#genreClose').onclick = () => { exploreGenre = null; paintGenreChips(); doSearch(); };
+    results.querySelectorAll('[data-gs]').forEach(ch => ch.onclick = () => { g.sort = ch.dataset.gs; g.low = false; showGenre(); });
+    const load = async () => {
+      more.disabled = true;
+      try {
+        let r = await tmdbFetch(discoverPath(g.kind, g.id, g.sort, page, g.low));
+        if (g.sort === 'top' && page === 1 && !g.low && (r.total_results || 0) < 20) { g.low = true; r = await tmdbFetch(discoverPath(g.kind, g.id, g.sort, page, true)); }
+        if (tok !== rowsTok) return;
+        hits = hits.concat((r.results || []).filter(h => h.poster_path).map(h => slimHit(h, g.kind)));
+        if (!hits.length) { grid.innerHTML = '<div class="empty">Aucun titre.</div>'; return; }
+        grid.innerHTML = expHitsHtml(hits, ownedKey);
+        wireExpHits(grid, hits, ownedKey);
+        more.hidden = page >= Math.min(r.total_pages || 1, 25);
+      } catch { if (tok === rowsTok && !hits.length) grid.innerHTML = '<div class="empty">Erreur de chargement.</div>'; }
+      more.disabled = false;
+    };
+    more.onclick = () => { page++; load(); };
+    await load();
+  };
+  drawGenres();
   let seq = 0, deb = null;
   const doSearch = async () => {
     const term = input.value.trim();
+    if (term.length < 2 && exploreGenre) { seq++; await showGenre(); return; }
     if (term.length < 2) { seq++; await showTrending(); return; }
+    if (exploreGenre) { exploreGenre = null; paintGenreChips(); }
     const my = ++seq;
     rowsTok++;
     results.innerHTML = `<div class="loading">Recherche…</div>`;
