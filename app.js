@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 57, date: '9 novembre 2026', title: 'La page ne remonte plus', items: [
+    'Quand on touche une option (Personnalisation, réactions, vu / pas vu…), la page reste là où on était au lieu de remonter tout en haut. Partout dans l’app.',
+    'Dans Explorer, les affiches ont les 4 coins arrondis et le cadre vert (vu) ou bleu (à voir) suit l’arrondi tout autour.',
+  ] },
   { id: 56, date: '8 novembre 2026', title: 'Vu ou à voir dans Explorer', items: [
     'Dans Explorer (et les titres similaires, la filmographie des acteurs), « Dans ma liste » est remplacé par l’état réel : ✓ Vu (vert), ▶ En cours (série commencée) ou 🕒 À voir (bleu).',
   ] },
@@ -1383,7 +1387,12 @@ function _runSlide(el, snapObj, dir) {
     snap.remove();
   }, dur + 40);
 }
+let _lastRenderedHash = null;
 async function render() {
+  // Même page redessinée (option cochée, réaction, vu…) : on reste à la même hauteur au lieu de remonter en haut.
+  const _hashNow = location.hash || '#/home';
+  const _keepY = _hashNow === _lastRenderedHash ? window.scrollY : null;
+  _lastRenderedHash = _hashNow;
   document.querySelectorAll('.page-snap').forEach(n => n.remove()); // safety: never leave a frozen page behind
   const [name, ...rest] = currentRoute().split('/');
   trackNav(location.hash || '#/home', name);
@@ -1413,11 +1422,13 @@ async function render() {
   const snapObj = dir !== 0 ? _makeSnapshot() : null;
   const fn = routes[name] || routes['library'];
   const ver = _dataVer;
+  if (_keepY != null) el.style.minHeight = el.offsetHeight + 'px'; // la page ne rétrécit pas pendant le redessin
   el.innerHTML = '<div class="loading">Chargement…</div>';
   try { await fn(el, rest); } catch (e) { el.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`; }
   el._ver = ver;
   const saved = scrollByHash[location.hash];
-  window.scrollTo(0, name !== 'show' && name !== 'movie' && name !== 'episode' && saved ? saved : 0);
+  el.style.minHeight = '';
+  window.scrollTo(0, _keepY != null ? _keepY : (name !== 'show' && name !== 'movie' && name !== 'episode' && saved ? saved : 0));
   if (snapObj) _runSlide(el, snapObj, dir);
   schedulePanes();
 }
