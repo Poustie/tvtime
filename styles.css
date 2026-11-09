@@ -767,7 +767,6 @@ html.light .detail-hero {
 .ep.seen .spoil-name { filter: none; }
 /* Genres : menu de la Bibliothèque et rangée d'Explorer */
 .genre-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -6px 0 16px; }
-.genre-bar select { max-width: 100%; padding: 8px 12px; border-radius: 10px; font-size: calc(13px * var(--fs, 1)); }
 .exp-genres { margin: -4px 0 18px; }
 .genre-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .genre-title { font-weight: 700; font-size: calc(15px * var(--fs, 1)); margin-right: auto; }
@@ -778,3 +777,10 @@ html.light .detail-hero {
 .genre-res-head h2 { margin: 0 auto 0 0; font-size: calc(17px * var(--fs, 1)); }
 .genre-results .pill-tabs { margin-bottom: 12px; }
 .genre-more { text-align: center; margin: 16px 0 8px; }
+
+/* Genres à cocher (plusieurs à la fois) */
+.genre-bar { display: block; }
+.genre-bar .genre-chips { margin-bottom: 4px; }
+.genre-lbl { flex: none; align-self: center; font-weight: 700; font-size: calc(13px * var(--fs, 1)); color: var(--muted); padding-right: 2px; }
+.genre-clear { border-style: dashed; }
+.genre-help { margin: 6px 0 0; color: var(--muted); font-size: calc(12px * var(--fs, 1)); }

@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 59, date: '9 novembre 2026', title: 'Plusieurs genres à la fois + Animé', items: [
+    'Explorer et Bibliothèque : on peut cocher plusieurs genres en même temps. Ex. Action + Comédie = les films qui sont à la fois des films d’action et des comédies.',
+    'Nouveau choix « 🇯🇵 Animé » (animation japonaise) en tête des genres, dans Explorer comme dans la Bibliothèque.',
+    'Dans la Bibliothèque, chaque genre affiche le nombre d’œuvres qu’il resterait, et « ✕ Effacer » enlève tous les genres cochés.',
+  ] },
   { id: 58, date: '9 novembre 2026', title: 'Chercher par genre', items: [
     'Explorer : nouvelle rangée « 🎭 Par genre ». Choisissez Séries ou Films puis un genre (Comédie, Science-Fiction, Animation…) : les titres s’affichent en grille, du plus populaire, du mieux noté ou du plus récent, avec « Voir plus ».',
     'Bibliothèque : un menu « Genre » sous les onglets permet de n’afficher que les séries ou films d’un genre (avec le nombre d’œuvres). Pour les films, les genres sont récupérés une seule fois la première fois (quelques secondes).',
@@ -731,7 +736,7 @@ async function getShowMeta(tmdbId, force) {
     id: tmdbId, name: d.name, poster: d.poster_path, backdrop: d.backdrop_path,
     overview: d.overview, firstAir: d.first_air_date, status: d.status,
     runtime: (d.episode_run_time && d.episode_run_time[0]) || null,
-    genres: (d.genres || []).map(g => g.name),
+    genres: (d.genres || []).map(g => g.name), lang: d.original_language || null,
     seasons: (d.seasons || []).filter(s => s.season_number > 0).map(s => ({ n: s.season_number, count: s.episode_count })),
     totalEpisodes: d.number_of_episodes,
     lastAir: (d.last_episode_to_air && d.last_episode_to_air.air_date) || null,
@@ -755,7 +760,7 @@ async function getMovieMeta(tmdbId, force) {
   const meta = {
     id: tmdbId, title: d.title, poster: d.poster_path, backdrop: d.backdrop_path,
     overview: d.overview, release: d.release_date, runtime: d.runtime,
-    genres: (d.genres || []).map(g => g.name), vote: d.vote_average || null,
+    genres: (d.genres || []).map(g => g.name), lang: d.original_language || null, vote: d.vote_average || null,
     voteCount: d.vote_count || 0, tagline: d.tagline,
     cast: extractCast(d.credits),
     trailer: pickTrailer(d.videos),
@@ -2311,47 +2316,74 @@ async function hydrateMoviePosters(container, list) {
 
 
 //////////////////////// Library view ////////////////////////
-let libFilter = { q: '', kind: 'series', tab: 'following', movieTab: 'all', sort: 'az', genre: '', movieGenre: '' };
+let libFilter = { q: '', kind: 'series', tab: 'following', movieTab: 'all', sort: 'az', genres: [], movieGenres: [] };
 // ---------- Genres (filtres de la Bibliothèque et d'Explorer) ----------
-function showGenres(sh) { const m = metaFor(sh); return (m && m.genres) || []; }
+const ANIME = 'Animé'; // pas un genre TMDB : Animation + langue d'origine japonaise
+function showTmdbIdOf(sh) { return sh.forcedTmdb || (sh.tvdbId != null ? tmdbCache.map[sh.tvdbId] : null) || null; }
 function movieTmdbRec(m) { return (userState.movieTmdb && userState.movieTmdb[m.name]) || (tmdbCache.movies && tmdbCache.movies[m.name]) || null; }
+const langOf = (kind, id, meta) => (meta && meta.lang) || (tmdbCache.langs && tmdbCache.langs[kind + ':' + id]) || null;
+const withAnime = (g, lang) => (lang === 'ja' && g.includes('Animation') ? [ANIME, ...g] : g);
+function showGenres(sh) {
+  const m = metaFor(sh); const g = (m && m.genres) || [];
+  return withAnime(g, langOf('tv', showTmdbIdOf(sh), m));
+}
 function movieGenres(m) {
   const r = movieTmdbRec(m); if (!r || !r.id) return [];
   const mm = tmdbCache.movieMeta && tmdbCache.movieMeta[r.id];
-  if (mm && mm.genres && mm.genres.length) return mm.genres;
-  return (tmdbCache.movieGenres && tmdbCache.movieGenres[r.id]) || [];
+  const g = (mm && mm.genres && mm.genres.length) ? mm.genres : ((tmdbCache.movieGenres && tmdbCache.movieGenres[r.id]) || []);
+  return withAnime(g, langOf('movie', r.id, mm));
 }
-// Films dont on ne connaît pas encore les genres : demandés une seule fois à TMDB, puis gardés dans le cache.
-let _mgFill = null;
-function fillMovieGenres(movies, onProgress) {
-  if (_mgFill) return _mgFill;
+// Infos manquantes demandées une seule fois à TMDB puis gardées dans le cache :
+// films → genres (+ langue) ; films et séries d'animation → langue d'origine (pour « Animé »).
+const _fillRun = {}, _fillTried = new Set(); // _fillTried : déjà demandés pendant cette session (pas de nouvel essai en boucle)
+function fillGenreInfo(kind, items, onProgress) {
+  if (_fillRun[kind]) return _fillRun[kind];
   if (!hasKey()) return null;
   if (!tmdbCache.movieGenres) tmdbCache.movieGenres = {};
-  const ids = [...new Set(movies.map(m => { const r = movieTmdbRec(m); return r && r.id; })
-    .filter(id => id && !tmdbCache.movieGenres[id] && !(tmdbCache.movieMeta && tmdbCache.movieMeta[id] && tmdbCache.movieMeta[id].genres)))];
-  if (!ids.length) return null;
-  const total = ids.length; let done = 0;
+  if (!tmdbCache.langs) tmdbCache.langs = {};
+  const ids = new Set();
+  for (const it of items) {
+    if (kind === 'tv') {
+      const id = showTmdbIdOf(it), m = metaFor(it);
+      if (id && m && (m.genres || []).includes('Animation') && !langOf('tv', id, m)) ids.add(id);
+    } else {
+      const r = movieTmdbRec(it); if (!r || !r.id) continue;
+      const mm = tmdbCache.movieMeta && tmdbCache.movieMeta[r.id];
+      const g = (mm && mm.genres) || tmdbCache.movieGenres[r.id];
+      if (!g || (g.includes('Animation') && !langOf('movie', r.id, mm))) ids.add(r.id);
+    }
+  }
+  const todo = [...ids].filter(id => !_fillTried.has(kind + ':' + id)); if (!todo.length) return null;
+  todo.forEach(id => _fillTried.add(kind + ':' + id));
+  const total = todo.length; let done = 0;
   const worker = async () => {
-    while (ids.length) {
-      const id = ids.shift();
-      try { const d = await tmdbFetch(`/movie/${id}`); tmdbCache.movieGenres[id] = (d.genres || []).map(g => g.name); } catch {}
+    while (todo.length) {
+      const id = todo.shift();
+      try {
+        const d = await tmdbFetch(`/${kind}/${id}`);
+        if (kind === 'movie') tmdbCache.movieGenres[id] = (d.genres || []).map(g => g.name);
+        tmdbCache.langs[kind + ':' + id] = d.original_language || '?';
+      } catch {}
       done++;
       if (done % 25 === 0) { scheduleSaveCache(); if (onProgress) onProgress(done, total); }
     }
   };
-  _mgFill = Promise.all([1, 2, 3, 4, 5].map(worker))
-    .then(() => { _mgFill = null; scheduleSaveCache(); if (onProgress) onProgress(total, total); })
-    .finally(() => { _mgFill = null; });
-  return _mgFill;
+  _fillRun[kind] = Promise.all([1, 2, 3, 4, 5].map(worker))
+    .then(() => { _fillRun[kind] = null; scheduleSaveCache(); if (onProgress) onProgress(total, total); })
+    .finally(() => { _fillRun[kind] = null; });
+  return _fillRun[kind];
 }
-// Menu « Genre » : genres présents dans la liste, avec leur nombre d'œuvres.
-function genreOptionsHtml(items, genresOf, cur) {
+// Boutons de genres à cocher (plusieurs = l'œuvre doit avoir TOUS les genres cochés), avec le nombre d'œuvres restantes.
+function genreChipsHtml(items, genresOf, sel) {
   const cnt = new Map();
-  for (const it of items) for (const g of genresOf(it)) cnt.set(g, (cnt.get(g) || 0) + 1);
-  if (cur && !cnt.has(cur)) cnt.set(cur, 0);
-  const list = [...cnt].sort((a, b) => a[0].localeCompare(b[0], 'fr'));
-  return `<option value="">🎭 Tous les genres</option>` + list.map(([g, n]) => `<option value="${esc(g)}"${g === cur ? ' selected' : ''}>${esc(g)} (${n})</option>`).join('');
+  for (const it of items) for (const g of new Set(genresOf(it))) cnt.set(g, (cnt.get(g) || 0) + 1);
+  for (const g of sel) if (!cnt.has(g)) cnt.set(g, 0);
+  const list = [...cnt].filter(([g, n]) => n > 0 || sel.includes(g))
+    .sort((a, b) => (b[0] === ANIME) - (a[0] === ANIME) || a[0].localeCompare(b[0], 'fr'));
+  return (sel.length ? '<span class="chip genre-clear" data-gclear="1">✕ Effacer</span>' : '<span class="genre-lbl">🎭 Genres</span>') +
+    list.map(([g, n]) => `<span class="chip ${sel.includes(g) ? 'active' : ''}" data-g="${esc(g)}">${g === ANIME ? '🇯🇵 ' : ''}${esc(g)} <b class="chip-n">${n}</b></span>`).join('');
 }
+const hasAllGenres = (genresOf, sel) => (it) => { if (!sel.length) return true; const g = genresOf(it); return sel.every(x => g.includes(x)); };
 // Explorer : liste des genres TMDB (gardée 30 jours) et recherche « par genre ».
 async function tmdbGenreList(kind) {
   const c = tmdbCache.genreLists || (tmdbCache.genreLists = {});
@@ -2364,10 +2396,15 @@ async function tmdbGenreList(kind) {
 }
 const GENRE_SORTS = [['pop', 'Populaires'], ['top', 'Mieux notés'], ['new', 'Récents']];
 // « Mieux notés » : beaucoup de votes exigés (sinon des nouveautés notées par leurs seuls fans passent devant) ; low = seuil réduit pour les petits genres.
-function discoverPath(kind, gid, sort, page, low) {
+// g = { kind, ids: [genres TMDB, tous exigés], anime }.
+function discoverPath(g, sort, page, low) {
+  const kind = g.kind;
   const today = new Date().toISOString().slice(0, 10);
   const dateF = kind === 'tv' ? 'first_air_date' : 'primary_release_date';
-  let q = `/discover/${kind}?with_genres=${gid}&page=${page}&include_adult=false`;
+  const ids = [...new Set([...g.ids, ...(g.anime ? [16] : [])])];
+  let q = `/discover/${kind}?page=${page}&include_adult=false`;
+  if (ids.length) q += '&with_genres=' + ids.join(',');
+  if (g.anime) q += '&with_original_language=ja';
   if (kind === 'tv') q += '&without_genres=10767,10763';
   if (sort === 'top') q += `&sort_by=vote_average.desc&vote_count.gte=${low ? (kind === 'tv' ? 50 : 100) : (kind === 'tv' ? 1000 : 3000)}`;
   else if (sort === 'new') q += `&sort_by=${dateF}.desc&${dateF}.lte=${today}&vote_count.gte=${kind === 'tv' ? 10 : 30}`;
@@ -2375,7 +2412,7 @@ function discoverPath(kind, gid, sort, page, low) {
   return q;
 }
 let exploreGenreKind = 'tv'; // Séries ou Films dans « Par genre »
-let exploreGenre = null;     // genre choisi dans Explorer { kind, id, name, sort } (gardé au retour d'un aperçu)
+let exploreGenre = null;     // genres cochés dans Explorer { kind, ids, names, anime, sort } (gardés au retour d'un aperçu)
 route('library', async (el) => {
   buildModel();
   const shows = Array.from(MODEL.shows.values());
@@ -2394,7 +2431,7 @@ route('library', async (el) => {
       <span class="chip ${libFilter.kind === 'movie' ? 'active' : ''}" data-kind="movie">🎬 Films</span>
     </div>
     <div class="pill-tabs" id="libTabs"></div>
-    <div class="genre-bar"><select class="input" id="libGenre" aria-label="Genre"></select><span class="sub" id="libGenreNote"></span></div>
+    <div class="genre-bar"><div class="genre-chips" id="libGenres"></div><span class="sub" id="libGenreNote"></span></div>
     <div class="grid" id="libGrid"></div>`;
 
   const seriesTabs = [
@@ -2439,23 +2476,40 @@ route('library', async (el) => {
   }
   drawSort();
 
-  const genreSel = el.querySelector('#libGenre'), genreNote = el.querySelector('#libGenreNote');
-  genreSel.onchange = (e) => { libFilter[libFilter.kind === 'movie' ? 'movieGenre' : 'genre'] = e.target.value; drawLib(); };
+  const genreBox = el.querySelector('#libGenres'), genreNote = el.querySelector('#libGenreNote');
+  const genreSelOf = () => (libFilter.kind === 'movie' ? libFilter.movieGenres : libFilter.genres);
+  genreBox.onclick = (ev) => {
+    const ch = ev.target.closest('.chip'); if (!ch) return;
+    const k = libFilter.kind === 'movie' ? 'movieGenres' : 'genres';
+    if (ch.dataset.gclear) libFilter[k] = [];
+    else { const g = ch.dataset.g; libFilter[k] = libFilter[k].includes(g) ? libFilter[k].filter(x => x !== g) : [...libFilter[k], g]; }
+    drawLib();
+  };
+  const drawGenreChips = (list, genresOf) => {
+    const sl = genreBox.scrollLeft; // garder la position de la rangée
+    genreBox.innerHTML = genreChipsHtml(list, genresOf, genreSelOf());
+    genreBox.scrollLeft = sl;
+  };
+  // Genres / langues pas encore connus : récupérés en arrière-plan (une seule fois), puis la page se met à jour.
+  const startFill = (kind, items, label) => {
+    const grid = el.querySelector('#libGrid');
+    const fill = fillGenreInfo(kind, items, (d, t) => {
+      if (!grid.isConnected) return;
+      genreNote.textContent = d < t ? `${label} : ${d}/${t}…` : '';
+      if (d >= t && (libFilter.kind === 'movie') === (kind === 'movie')) drawLib();
+    });
+    if (fill && !genreNote.textContent) genreNote.textContent = label + '…';
+    if (!fill) genreNote.textContent = '';
+  };
   function drawLib() {
     const grid = el.querySelector('#libGrid');
     const q = libFilter.q.trim().toLowerCase();
     if (libFilter.kind === 'movie') {
       const pred = movieTabs.find(t => t[0] === libFilter.movieTab)[2];
       let list = allMovies.filter(pred);
-      genreSel.innerHTML = genreOptionsHtml(list, movieGenres, libFilter.movieGenre);
-      // Genres des films pas encore connus : récupérés en arrière-plan (une seule fois).
-      const fill = fillMovieGenres(allMovies, (d, t) => {
-        if (!grid.isConnected) return;
-        genreNote.textContent = d < t ? `Genres des films : ${d}/${t}…` : '';
-        if (d >= t && libFilter.kind === 'movie') drawLib();
-      });
-      if (fill && !genreNote.textContent) genreNote.textContent = 'Récupération des genres des films…';
-      if (libFilter.movieGenre) list = list.filter(m => movieGenres(m).includes(libFilter.movieGenre));
+      startFill('movie', allMovies, 'Genres des films');
+      list = list.filter(hasAllGenres(movieGenres, libFilter.movieGenres));
+      drawGenreChips(list, movieGenres);
       if (q) list = list.filter(m => ((m.name || '') + ' ' + movieDisplayName(m)).toLowerCase().includes(q));
       list.sort(LIB_SORTERS_MOVIE[libFilter.sort] || LIB_SORTERS_MOVIE.az);
       el.querySelector('#libCount').textContent = `${list.length} film(s)`;
@@ -2466,9 +2520,9 @@ route('library', async (el) => {
     } else {
       const pred = seriesTabs.find(t => t[0] === libFilter.tab)[2];
       let list = shows.filter(pred);
-      genreNote.textContent = '';
-      genreSel.innerHTML = genreOptionsHtml(list, showGenres, libFilter.genre);
-      if (libFilter.genre) list = list.filter(sh => showGenres(sh).includes(libFilter.genre));
+      startFill('tv', shows, 'Repérage des animés');
+      list = list.filter(hasAllGenres(showGenres, libFilter.genres));
+      drawGenreChips(list, showGenres);
       if (q) list = list.filter(s => searchNames(s).some(n => n.includes(q)));
       list.sort(LIB_SORTERS_SHOW[libFilter.sort] || LIB_SORTERS_SHOW.az);
       el.querySelector('#libCount').textContent = `${list.length} série(s)`;
@@ -3775,8 +3829,10 @@ route('explore', async (el) => {
   };
   // Par genre : Séries / Films + un bouton par genre ; toucher un genre affiche ses titres en grille.
   const genresEl = el.querySelector('#expGenres');
-  const paintGenreChips = () => genresEl.querySelectorAll('[data-gid]').forEach(ch => ch.classList.toggle('active',
-    !!exploreGenre && exploreGenre.kind === exploreGenreKind && exploreGenre.id === Number(ch.dataset.gid)));
+  const paintGenreChips = () => genresEl.querySelectorAll('[data-gid]').forEach(ch => {
+    const g = exploreGenre && exploreGenre.kind === exploreGenreKind ? exploreGenre : null;
+    ch.classList.toggle('active', !!g && (ch.dataset.gid === 'anime' ? g.anime : g.ids.includes(Number(ch.dataset.gid))));
+  });
   const drawGenres = async () => {
     const kind = exploreGenreKind;
     let list = [];
@@ -3784,7 +3840,8 @@ route('explore', async (el) => {
     if (kind !== exploreGenreKind) return;
     genresEl.innerHTML = `<div class="genre-head"><span class="genre-title">🎭 Par genre</span>
       <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">📺 Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">🎬 Films</span></div>
-      <div class="genre-chips">${list.map(g => `<span class="chip" data-gid="${g.id}">${esc(g.name)}</span>`).join('')}</div>`;
+      <div class="genre-chips"><span class="chip" data-gid="anime">🇯🇵 Animé</span>${list.map(g => `<span class="chip" data-gid="${g.id}">${esc(g.name)}</span>`).join('')}</div>
+      <p class="genre-help">Cochez plusieurs genres pour les combiner (ex. Action + Comédie).</p>`;
     paintGenreChips();
     genresEl.querySelectorAll('[data-gk]').forEach(ch => ch.onclick = () => {
       if (exploreGenreKind === ch.dataset.gk) return;
@@ -3793,19 +3850,25 @@ route('explore', async (el) => {
       drawGenres(); if (had) doSearch();
     });
     genresEl.querySelectorAll('[data-gid]').forEach(ch => ch.onclick = () => {
-      const id = Number(ch.dataset.gid);
-      const same = exploreGenre && exploreGenre.kind === kind && exploreGenre.id === id;
-      exploreGenre = same ? null : { kind, id, name: ch.textContent, sort: (exploreGenre && exploreGenre.sort) || 'pop' };
+      const first = !exploreGenre;
+      const g = exploreGenre && exploreGenre.kind === kind ? exploreGenre : { kind, ids: [], names: {}, anime: false, sort: (exploreGenre && exploreGenre.sort) || 'pop' };
+      if (ch.dataset.gid === 'anime') g.anime = !g.anime;
+      else {
+        const id = Number(ch.dataset.gid);
+        if (g.ids.includes(id)) g.ids = g.ids.filter(x => x !== id); else { g.ids = [...g.ids, id]; g.names[id] = ch.textContent; }
+      }
+      g.low = false;
+      exploreGenre = (g.ids.length || g.anime) ? g : null;
       input.value = ''; exploreQuery = '';
       paintGenreChips(); doSearch();
-      if (!same) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (first && exploreGenre) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   };
   const showGenre = async () => {
     const tok = ++rowsTok, g = exploreGenre;
     let page = 1, hits = [];
     results.innerHTML = `<div class="genre-results">
-      <div class="genre-res-head"><h2>${esc(g.name)} · ${g.kind === 'tv' ? 'Séries' : 'Films'}</h2><span class="chip" id="genreClose" title="Revenir à Explorer">✕ Fermer</span></div>
+      <div class="genre-res-head"><h2>${esc([...(g.anime ? ['Animé'] : []), ...g.ids.map(id => g.names[id])].join(' + '))} · ${g.kind === 'tv' ? 'Séries' : 'Films'}</h2><span class="chip" id="genreClose" title="Revenir à Explorer">✕ Fermer</span></div>
       <div class="pill-tabs" id="genreSort">${GENRE_SORTS.map(([k, l]) => `<span class="chip ${g.sort === k ? 'active' : ''}" data-gs="${k}">${l}</span>`).join('')}</div>
       <div class="ps-grid" id="genreGrid"><div class="loading">Chargement…</div></div>
       <div class="genre-more"><button class="btn" id="genreMore" hidden>Voir plus</button></div></div>`;
@@ -3815,11 +3878,11 @@ route('explore', async (el) => {
     const load = async () => {
       more.disabled = true;
       try {
-        let r = await tmdbFetch(discoverPath(g.kind, g.id, g.sort, page, g.low));
-        if (g.sort === 'top' && page === 1 && !g.low && (r.total_results || 0) < 20) { g.low = true; r = await tmdbFetch(discoverPath(g.kind, g.id, g.sort, page, true)); }
+        let r = await tmdbFetch(discoverPath(g, g.sort, page, g.low));
+        if (g.sort === 'top' && page === 1 && !g.low && (r.total_results || 0) < 20) { g.low = true; r = await tmdbFetch(discoverPath(g, g.sort, page, true)); }
         if (tok !== rowsTok) return;
         hits = hits.concat((r.results || []).filter(h => h.poster_path).map(h => slimHit(h, g.kind)));
-        if (!hits.length) { grid.innerHTML = '<div class="empty">Aucun titre.</div>'; return; }
+        if (!hits.length) { grid.innerHTML = '<div class="empty">Aucun titre avec tous ces genres à la fois.</div>'; more.hidden = true; return; }
         grid.innerHTML = expHitsHtml(hits, ownedKey);
         wireExpHits(grid, hits, ownedKey);
         more.hidden = page >= Math.min(r.total_pages || 1, 25);
