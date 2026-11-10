@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 60, date: '10 novembre 2026', title: 'Numéros d’épisodes des animés', items: [
+    'Pour les animés que l’app redécoupe en saisons (ceux que la base range en une seule grande saison), les épisodes sont maintenant numérotés dans leur saison : « Saison 3 · Épisode 1 » au lieu de « Saison 1 · Épisode 40 ».',
+    'C’est le cas partout : liste des épisodes, fiche de l’épisode, épisode suivant / précédent, « À suivre », historique des revisionnages et profil partagé avec les amis.',
+  ] },
   { id: 59, date: '9 novembre 2026', title: 'Plusieurs genres à la fois + Animé', items: [
     'Explorer et Bibliothèque : on peut cocher plusieurs genres en même temps. Ex. Action + Comédie = les films qui sont à la fois des films d’action et des comédies.',
     'Nouveau choix « 🇯🇵 Animé » (animation japonaise) en tête des genres, dans Explorer comme dans la Bibliothèque.',
@@ -1226,7 +1230,7 @@ function showRewatchHistoryHtml(sh) {
   }
   const days = Object.keys(byDay).sort().reverse();
   if (!days.length) return '';
-  const lab = ([s, n]) => `S${String(s).padStart(2, '0')}E${String(n).padStart(2, '0')}`;
+  const lab = ([s, n]) => epSE(sh, s, n);
   const line = (day) => {
     const eps = byDay[day].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     const txt = eps.length > 4 ? `${lab(eps[0])} → ${lab(eps[eps.length - 1])}` : eps.map(lab).join(', ');
@@ -2964,12 +2968,14 @@ route('episode', async (el, rest) => {
     ep = (tmdbCache.seasons[tmdbId + '|' + season] || []).find(e => e.n === n) || null;
   }
 
+  if (tmdbId && !splitMapOf(sh)) { const mt = tmdbCache.shows[tmdbId]; if (mt && mt.seasons && mt.seasons.length === 1) { try { await getSeasonEpisodes(tmdbId, mt.seasons[0].n); } catch {} } }
+  const dsp = epDisp(sh, season, n); // numéro affiché (saisons d'animé redécoupées)
   const k = epKey(sh.key, season, n);
   const seen = sh.seenKeys.has(k);
   const rating = MODEL.ratingMap.get(k) || 0;
   const emo = MODEL.emotionMap.get(k);
   const rw = MODEL.rewatchMap.get(k) || 0;
-  const title = (ep && ep.name) || ('Épisode ' + n);
+  const title = (ep && ep.name) || ('Épisode ' + dsp.n);
   const overviewTxt = ep ? (ep.overview || 'Pas de synopsis disponible pour cet épisode.') : (hasKey() ? 'Détails indisponibles.' : 'Ajoutez une clé TMDB (Réglages) pour voir les détails de l\'épisode.');
   const seenAt = seen ? episodeSeenAt(sh, season, n) : null;
   const rwTxt = rewatchListText(userState.rewatchDates && userState.rewatchDates[k], rw);
@@ -2984,16 +2990,16 @@ route('episode', async (el, rest) => {
     : '';
 
   const hideSpoil = antiSpoiler() && !seen; // anti-spoiler (Personnalisation)
-  const stillImg = ep && ep.still ? `<img src="${IMG(ep.still, 'w780')}" alt="">` : `<div class="ep-still-ph">${season}×${String(n).padStart(2, '0')}</div>`;
+  const stillImg = ep && ep.still ? `<img src="${IMG(ep.still, 'w780')}" alt="">` : `<div class="ep-still-ph">${epTag(sh, season, n)}</div>`;
   const nb = { key: sh.key, ...(await episodeNeighbors(tmdbId, season, n)) };
   el._epNb = nb; // read by the swipe to know the previous / next episode of this page
-  const epLabel = (e) => `${e.s}×${String(e.n).padStart(2, '0')}`;
+  const epLabel = (e) => epTag(sh, e.s, e.n);
   el.innerHTML = `
     ${backBtn('#/show/' + encodeURIComponent(sh.key))}
     <div class="ep-page">
       <h1 class="ep-title ${hideSpoil ? 'spoil' : ''}">${esc(title)}</h1>
       <div class="ep-num-row">
-        <div class="ep-num">Saison ${season} · Épisode ${n}</div>
+        <div class="ep-num">Saison ${dsp.s} · Épisode ${dsp.n}</div>
         <div class="ep-nav">
           ${nb.prev ? `<button class="btn sm ghost" data-epnav="prev" title="Épisode précédent">‹ ${epLabel(nb.prev)}</button>` : ''}
           ${nb.next ? `<button class="btn sm ghost" data-epnav="next" title="Épisode suivant">${epLabel(nb.next)} ›</button>` : ''}
@@ -3075,6 +3081,37 @@ function splitByAirGaps(eps, thrDays) {
   return groups;
 }
 
+// Animés rangés par TMDB en une seule grande saison et redécoupés à l'écran : numéro AFFICHÉ
+// dans la saison redécoupée (ex. 1×40 → 3×01). Les épisodes restent enregistrés sous leur numéro TMDB.
+const _splitMaps = new Map(); // clé série -> { sn, map: Map(n -> { s, n }) } ou null (pas de découpage)
+function setSplitMap(sh, sn, groups) {
+  if (!groups || groups.length < 2) { _splitMaps.set(sh.key, null); return; }
+  const map = new Map();
+  groups.forEach((g, i) => g.forEach((e, j) => map.set(e.n, { s: i + 1, n: j + 1 })));
+  _splitMaps.set(sh.key, { sn, map });
+}
+function splitMapOf(sh) {
+  if (!sh) return null;
+  if (_splitMaps.has(sh.key)) return _splitMaps.get(sh.key);
+  const id = overrideShowTmdb(sh) || (sh.tvdbId != null ? tmdbCache.map[sh.tvdbId] : null);
+  const meta = id && tmdbCache.shows[id];
+  if (!meta) return null; // pas encore connu : on réessaiera plus tard
+  const ms = meta.seasons || [];
+  if (ms.length !== 1 || !(ms[0].n > 0)) { _splitMaps.set(sh.key, null); return null; }
+  const eps = tmdbCache.seasons[id + '|' + ms[0].n];
+  if (!eps || !eps.length) return null;
+  setSplitMap(sh, ms[0].n, splitByAirGaps([...eps].sort((a, b) => a.n - b.n), 120));
+  return _splitMaps.get(sh.key);
+}
+function epDisp(sh, season, n) {
+  const x = splitMapOf(sh);
+  const d = x && x.sn === season && x.map.get(n);
+  return d || { s: season, n };
+}
+const pad2 = (v) => String(v).padStart(2, '0');
+const epTag = (sh, season, n) => { const d = epDisp(sh, season, n); return `${d.s}×${pad2(d.n)}`; };
+const epSE = (sh, season, n) => { const d = epDisp(sh, season, n); return `S${pad2(d.s)}E${pad2(d.n)}`; };
+
 async function renderSeasons(container, sh, tmdbId, meta, fresh) {
   container.innerHTML = '';
   // Merge TMDB seasons with any user-added (custom) seasons/episodes.
@@ -3103,9 +3140,11 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
     const sn = sorted[0];
     const all = await buildEpsForSeason(sn);
     const groups = splitByAirGaps(all, 120);
+    setSplitMap(sh, sn, groups);
     if (groups.length > 1) groups.forEach((g, i) => blocks.push({ sn, label: 'Saison ' + (i + 1), eps: g }));
     else blocks.push({ sn, label: 'Saison ' + sn, eps: all });
   } else {
+    _splitMaps.set(sh.key, null);
     for (const sn of sorted) blocks.push({ sn, label: 'Saison ' + sn, eps: null }); // fetched lazily below
   }
 
@@ -3243,8 +3282,8 @@ function epHtml(sh, season, e, pass) {
   const aired = e.air && new Date(e.air) <= new Date();
   return `<div class="ep ${seen ? 'seen' : ''} ${cur ? 'cur' : ''} ${e.custom ? 'custom' : ''}" data-n="${e.n}">
     <div class="check ${seen ? 'on' : ''}" data-act="seen">✓</div>
-    <div class="num">${season}×${String(e.n).padStart(2, '0')}</div>
-    <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + e.n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
+    <div class="num">${epTag(sh, season, e.n)}</div>
+    <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + epDisp(sh, season, e.n).n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
     <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Visionnages — appui : +1 · appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
     ${reactPickerHtml(epScore(k), false)}
     ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">🗑</button>` : ''}
@@ -3347,11 +3386,11 @@ function wireEpisodes(container, sh, season, onChange, opts) {
       row.querySelector('.check').classList.toggle('on', seen);
       repaintPass(sh);
     };
-    const epTitle = `${displayName(sh)} · S${String(season).padStart(2, '0')}E${String(n).padStart(2, '0')}`;
+    const epTitle = `${displayName(sh)} · ${epSE(sh, season, n)}`;
     rwEl.onclick = () => {
       const prev = rewatchOf(sh, season, n);
       setRewatch(sh, season, n, prev + 1); paintRw(); updateSyncStatus(); onChange();
-      toastUndo(`🔁 S${String(season).padStart(2, '0')}E${String(n).padStart(2, '0')} : vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); paintRw(); onChange(); });
+      toastUndo(`🔁 ${epSE(sh, season, n)} : vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); paintRw(); onChange(); });
     };
     onLongPress(rwEl, () => openRewatchStepper(epTitle, () => rewatchOf(sh, season, n), (c) => setRewatch(sh, season, n, c), () => { paintRw(); onChange(); }));
     wireReactPicker(row, () => epScore(epKey(sh.key, season, n)), (v) => setEpScore(sh, season, n, v), () => sh.seenKeys.has(epKey(sh.key, season, n)));
@@ -3365,7 +3404,7 @@ function wireEpisodes(container, sh, season, onChange, opts) {
 // Offer to mark every earlier aired episode as seen after checking a mid-run episode.
 function offerMarkPrevious(sh, prevList, season, n) {
   const cnt = prevList.length;
-  const label = `${season}×${String(n).padStart(2, '0')}`;
+  const label = epTag(sh, season, n);
   showModal(`<h2>Marquer les épisodes précédents ?</h2>
     <p>Vous avez marqué l'épisode <strong>${label}</strong> comme vu. Voulez-vous aussi marquer les <strong>${cnt}</strong> épisode(s) précédent(s) comme vu(s) ?</p>
     <div class="row"><button class="btn ghost" data-close>Non, juste celui-ci</button><button class="btn primary" id="mpGo">Oui, tout marquer avant</button></div>`,
@@ -3480,7 +3519,7 @@ async function renderUpnext(el) {
       <div class="poster">${posterHtml(r.sh, r.poster)}</div>
       <div class="info">
         <div class="sname">${esc(r.sh.name)}</div>
-        <div class="ename">S${r.season}E${String(r.n).padStart(2, '0')} — ${esc(r.name || '')}</div>
+        <div class="ename">${epSE(r.sh, r.season, r.n)} — ${esc(r.name || '')}</div>
         <div class="sub" style="font-size:12px">${r.air ? esc(r.air) : ''} · ${r.remaining} épisode(s) restant(s)</div>
       </div>
       <button class="btn primary" data-mark>✓ Vu</button>
@@ -4938,7 +4977,7 @@ function buildShareSnapshot() {
         const sh = MODEL.shows.get(x.sk); if (!sh) continue;
         const last = groups[groups.length - 1];
         if (last && last.k === 'e' && last.sk === x.sk) { last.c++; continue; }
-        groups.push({ k: 'e', sk: x.sk, n: displayName(sh), e: 'S' + String(x.s).padStart(2, '0') + 'E' + String(x.e).padStart(2, '0'), c: 1, at: x.at });
+        groups.push({ k: 'e', sk: x.sk, n: displayName(sh), e: epSE(sh, x.s, x.e), c: 1, at: x.at });
       } else groups.push({ k: 'm', n: x.n, c: 1, at: x.at });
     }
     snap.recent = groups.map(g => ({ k: g.k, n: g.n, e: g.e, c: g.c, at: g.at }));
