@@ -1,0 +1,9 @@
+# Garde-fou : ce dépôt est PUBLIC (GitHub Pages). Jamais de données personnelles ici.
+# data.js et seed.js doivent rester les versions VIDES (vérifié par equipe/outils/publier.js).
+*.csv
+*.json
+*.bak
+*.zip
+userdata*
+tmdb-cache*
+tvtime-*

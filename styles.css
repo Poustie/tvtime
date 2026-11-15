@@ -460,7 +460,13 @@ html.amoled .bottom-nav { background: rgba(0,0,0,.94); }
 }
 .backup-banner .bb-text { flex: 1 1 200px; display: flex; flex-direction: column; gap: 3px; font-size: calc(13px * var(--fs, 1)); }
 .backup-banner .bb-text span { color: var(--muted); font-size: calc(12px * var(--fs, 1)); line-height: 1.35; }
-.backup-banner .bb-actions { display: flex; gap: 8px; margin-left: auto; }
+.backup-banner .bb-actions { display: flex; gap: 8px; flex: 1 1 100%; flex-wrap: wrap; }
+.backup-banner .bb-actions .btn.primary { flex: 1 1 100%; }
+.backup-banner .bb-actions .btn.ghost { flex: 1 1 0; }
+/* Sauvegarde en ligne : ligne d'état et alerte de conflit */
+.sb-state { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; border-radius: 10px; background: var(--bg3); border: 1px solid var(--line); font-size: calc(13px * var(--fs, 1)); line-height: 1.4; }
+.sb-state.warn { border-color: var(--accent); }
+.sb-conflict { margin-bottom: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--accent); font-size: calc(13px * var(--fs, 1)); line-height: 1.45; }
 
 .settings-field { margin-bottom: 18px; }
 .settings-field label { display: block; font-weight: 600; margin-bottom: 6px; font-size: calc(14px * var(--fs, 1)); }
@@ -784,3 +790,15 @@ html.light .detail-hero {
 .genre-lbl { flex: none; align-self: center; font-weight: 700; font-size: calc(13px * var(--fs, 1)); color: var(--muted); padding-right: 2px; }
 .genre-clear { border-style: dashed; }
 .genre-help { margin: 6px 0 0; color: var(--muted); font-size: calc(12px * var(--fs, 1)); }
+
+/* Restauration / import : fenêtre de confirmation chiffrée */
+.rs-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.rs-actions .btn { flex: 0 1 auto; }
+.rs-table { border: 1px solid var(--line); border-radius: 10px; background: var(--bg3); overflow: hidden; }
+.rs-row { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 8px; padding: 9px 12px; font-size: calc(14px * var(--fs, 1)); align-items: center; }
+.rs-row + .rs-row { border-top: 1px solid var(--line); }
+.rs-row b { text-align: right; font-variant-numeric: tabular-nums; }
+.rs-row.rs-head { font-size: calc(12px * var(--fs, 1)); color: var(--muted); }
+.rs-row.rs-head span:nth-child(n+2) { text-align: right; }
+.modal .rs-warn { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--accent); color: var(--text); font-size: calc(13px * var(--fs, 1)); line-height: 1.45; }
+.modal .rs-warn.rs-info { border-color: var(--line); background: var(--bg3); }

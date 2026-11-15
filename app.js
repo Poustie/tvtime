@@ -11,6 +11,12 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 61, date: '16 novembre 2026', title: 'Vos données mieux protégées', items: [
+    'Sauvegarde en ligne : elle ne peut plus être remplacée par une version moins complète (par exemple depuis un téléphone neuf). L’app garde aussi la version précédente et vous prévient s’il y a une différence (« Restaurer » ou « Remplacer quand même »).',
+    'L’état de la sauvegarde est visible en haut de Mon compte (« ☁️ Sauvegardé en ligne aujourd’hui à … »). Le rappel de sauvegarde est plus clair, et les profils qui ne suivent que des films sont maintenant protégés eux aussi.',
+    'Importer un fichier ou restaurer : une fenêtre montre d’abord ce qui va changer (date, épisodes et films). Une copie de votre état est gardée, et Réglages permet de revenir en arrière.',
+    '« Marquer une saison vue » ne remplace plus la vraie date des épisodes déjà vus, et les dates déjà écrasées sont réparées automatiquement.',
+  ] },
   { id: 60, date: '10 novembre 2026', title: 'Numéros d’épisodes des animés', items: [
     'Pour les animés que l’app redécoupe en saisons (ceux que la base range en une seule grande saison), les épisodes sont maintenant numérotés dans leur saison : « Saison 3 · Épisode 1 » au lieu de « Saison 1 · Épisode 40 ».',
     'C’est le cas partout : liste des épisodes, fiche de l’épisode, épisode suivant / précédent, « À suivre », historique des revisionnages et profil partagé avec les amis.',
@@ -368,6 +374,8 @@ let userState = {
   amoled: true, // fond totalement noir (écrans AMOLED) — activé par défaut
 };
 // tmdbCache = metadata cache (persisted to tmdb-cache.json)
+// Valeurs d'origine de userState : sert à remettre à zéro l'état avant une restauration complète.
+const USERSTATE_DEFAULTS = JSON.parse(JSON.stringify(userState));
 let tmdbCache = { map: {}, shows: {}, seasons: {}, movies: {}, movieMeta: {}, episodes: {} };
 
 let MODEL = null; // built show model
@@ -405,7 +413,7 @@ async function idbSet(key, val) {
     return await new Promise((res) => {
       const tx = db.transaction('kv', 'readwrite');
       tx.objectStore('kv').put(val, key);
-      tx.oncomplete = () => res(true); tx.onerror = () => res(false);
+      tx.oncomplete = () => res(true); tx.onerror = () => res(false); tx.onabort = () => res(false);
     });
   } catch { return false; }
 }
@@ -552,8 +560,16 @@ function buildModel() {
   for (const sh of shows.values()) {
     if (sh.seenKeys.size === 0) continue;
     const meta = metaFor(sh);
-    if (meta && meta.seasons && meta.seasons.length) alignSeenToTmdb(sh, meta);
+    sh.alignState = (meta && meta.seasons && meta.seasons.length) ? alignSeenToTmdb(sh, meta) : 'nometa';
   }
+
+  // Clés de l'export réellement vues (après réalignement, avant retraits/ajouts) des séries dont la numérotation est
+  // SÛRE (aucun réalignement, toutes les saisons en cache) : sert à toggleSeen et à la réparation des seenAdd en double.
+  const baseKeys = new Set();
+  for (const sh of shows.values()) if (sh.alignState === 'stable') for (const kk of sh.seenKeys) baseKeys.add(kk);
+  // Toutes les clés vues de l'export (même séries à numérotation incertaine) : pour décocher un épisode qui vient de l'export.
+  const exportKeys = new Set();
+  for (const sh of shows.values()) for (const kk of sh.seenKeys) exportKeys.add(kk);
 
   // apply user removals / additions
   for (const kk of Object.keys(userState.seenRemove)) baselineSeen.delete(kk);
@@ -627,6 +643,8 @@ function buildModel() {
   MODEL = {
     shows,
     seenCount: baselineSeen.size,
+    baseKeys,
+    exportKeys,
     seenDates,
     emotionMap,
     ratingMap,
@@ -641,7 +659,7 @@ function buildModel() {
 // season structure matches and this becomes a no-op.
 function alignSeenToTmdb(sh, meta) {
   const tmdbSeasons = (meta.seasons || []).filter(s => s.n > 0).sort((a, b) => a.n - b.n);
-  if (!tmdbSeasons.length) return;
+  if (!tmdbSeasons.length) return 'nometa';
   // Flatten TMDB episodes in aired order. Use their REAL episode numbers when the
   // season lists are cached (anime often number continuously, e.g. season 2 = ep
   // 33..53); otherwise fall back to 1..count.
@@ -659,7 +677,8 @@ function alignSeenToTmdb(sh, meta) {
     total++;
     if (valid.has(S + '|' + N)) mapped++;
   }
-  if (!total || mapped / total >= 0.85) return;
+  if (!total || mapped / total >= 0.85) return allCached ? 'stable' : 'pending'; // 'pending' : saisons pas toutes en cache, le résultat peut changer
+  // (ci-dessous : réalignement effectué -> 'changed')
   // Absolute-order remap: the k-th watched episode (by TV Time season/number)
   // becomes the k-th TMDB episode.
   const tvSize = {};
@@ -679,6 +698,7 @@ function alignSeenToTmdb(sh, meta) {
     out.add(t ? (sh.key + '|' + t) : k);
   }
   sh.seenKeys = out;
+  return 'changed';
 }
 
 
@@ -1046,19 +1066,38 @@ function toggleSeen(sh, season, number, seen) {
   const k = epKey(sh.key, season, number);
   const currentlySeen = sh.seenKeys.has(k);
   const target = seen != null ? seen : !currentlySeen;
+  if (target === currentlySeen) return; // déjà dans l'état demandé : on ne touche à rien (ni date, ni retrait)
+  const inBase = !!(MODEL && MODEL.baseKeys && MODEL.baseKeys.has(k)); // épisode de l'export TV Time
   if (target) {
     sh.seenKeys.add(k);
     sh.followed = true; // marquer un épisode vu suit automatiquement la série
     unarchiveOnActivity(sh);
-    if (userState.seenRemove[k]) delete userState.seenRemove[k];
-    else userState.seenAdd[k] = { at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
+    const hadRemove = !!userState.seenRemove[k];
+    if (hadRemove) delete userState.seenRemove[k];
+    // Hors de l'export (ou numérotation incertaine) : l'épisode n'est pas rendu par la base, il faut un seenAdd.
+    if (!hadRemove || !inBase) userState.seenAdd[k] = { at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
   } else {
     sh.seenKeys.delete(k);
-    if (userState.seenAdd[k]) delete userState.seenAdd[k];
-    else userState.seenRemove[k] = true;
+    const hadAdd = !!userState.seenAdd[k];
+    if (hadAdd) delete userState.seenAdd[k];
+    const inExport = !!(MODEL && MODEL.exportKeys && MODEL.exportKeys.has(k)); // vu dans l'export, même si la numérotation est incertaine
+    if (!hadAdd || inBase || inExport) userState.seenRemove[k] = true; // un épisode de l'export doit être retiré explicitement
   }
   scheduleSaveState();
   MODEL.seenCount = computeSeenCount();
+}
+// Réparation (idempotente, à chaque démarrage) : un « Marquer vu » refait sur un épisode déjà vu dans l'export TV Time avait
+// créé un seenAdd qui écrasait la vraie date. On retire ces seenAdd en double (séries à numérotation sûre seulement) :
+// l'épisode reste vu, avec sa date d'origine.
+function repairSeenAddDup() {
+  if (!(DATA.seen || []).length || !Object.keys(userState.seenAdd || {}).length) return 0;
+  buildModel();
+  let n = 0;
+  for (const k of Object.keys(userState.seenAdd)) {
+    if (MODEL.baseKeys.has(k) && !userState.seenRemove[k]) { delete userState.seenAdd[k]; n++; }
+  }
+  if (n) { MODEL = null; scheduleSaveState(); console.info(`Réparation : ${n} date(s) d'épisode rétablie(s) d'après l'export TV Time`); }
+  return n;
 }
 function computeSeenCount() {
   let c = 0; for (const sh of MODEL.shows.values()) c += sh.seenKeys.size; return c;
@@ -4160,6 +4199,7 @@ async function computeNextEpisode(sh) {
 
 //////////////////////// Profil (hub) ////////////////////////
 route('profile', async (el) => {
+  document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // Mon compte : pas de bannière de rappel
   buildModel();
   const shows = Array.from(MODEL.shows.values());
   const following = shows.filter(s => s.followed && !s.archived).length;
@@ -4478,7 +4518,9 @@ route('settings', async (el) => {
         <button class="btn" id="exportBtn">Exporter mes données</button>
         <label class="btn" style="cursor:pointer">Importer<input type="file" id="importFile" accept="application/json" hidden></label>
       </div>
-      ${serverAvailable ? '' : `<p class="hint" style="color:var(--muted);margin-top:10px">Dernière sauvegarde : <b>${userState.lastBackupAt ? esc(fmtAgo(userState.lastBackupAt)) : 'jamais'}</b></p>
+      <div id="undoRestoreBox"></div>
+      ${sbSession ? sbStateHtml() : ''}
+      ${serverAvailable ? '' : `<p class="hint" style="color:var(--muted);margin-top:10px">Dernière sauvegarde dans un fichier : <b>${userState.lastBackupAt ? esc(fmtAgo(userState.lastBackupAt)) : 'jamais'}</b></p>
       <label class="check-row"><input type="checkbox" id="weeklyBackup" ${userState.weeklyBackup !== false ? 'checked' : ''}> Me proposer une sauvegarde chaque semaine</label>`}
     </div>
 
@@ -4509,6 +4551,15 @@ route('settings', async (el) => {
   if (wb) wb.onchange = (e) => { userState.weeklyBackup = e.target.checked; scheduleSaveState(); };
   el.querySelector('#shareBtn').onclick = exportSharedList;
   el.querySelector('#importFile').onchange = importData;
+  // Copie faite avant la dernière restauration : bouton pour tout remettre comme avant.
+  idbGet('avantRestauration').then((s) => {
+    const box = el.querySelector('#undoRestoreBox');
+    if (!s || !s.userState || !box) return;
+    const d = new Date(s.at);
+    const when = isNaN(d) ? '' : ` (${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })})`;
+    box.innerHTML = `<button class="btn ghost" id="undoRestore" style="margin-top:10px">↩ Revenir à l’état du${when.replace(' (', ' ').replace(')', '')}</button>`;
+    box.querySelector('#undoRestore').onclick = () => undoLastRestore();
+  });
 });
 
 async function syncEverything(progEl) {
@@ -4577,22 +4628,30 @@ let sbSession = null; // { at, rt, exp, uid, email } — gardé hors de userStat
 try { sbSession = JSON.parse(localStorage.getItem(SB_SESSION_KEY) || 'null'); } catch {}
 let sbPendingEmail = null; // e-mail en attente de saisie du code
 let sbBusy = false;
+let sbRestoring = false; // une restauration en ligne est en cours (téléchargement + fenêtre + application) : aucun envoi automatique
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
 let sbProfile = null; // mon profil (communauté) : { pseudo, is_public, avatar, updated_at } — null = pas encore créé
 function sbStoreSession(s) {
   sbSession = s;
-  if (!s) { sbProfile = null; try { localStorage.removeItem('tvtime-acct'); } catch {} }
+  if (s) document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // connecté : plus de rappel de sauvegarde
+  if (!s) {
+    sbProfile = null; try { localStorage.removeItem('tvtime-acct'); } catch {}
+    // déconnecté : l'état de la sauvegarde en ligne ne concerne plus ce compte
+    if (typeof userState === 'object' && userState && (userState.cloudConflict || userState.lastCloudBackupAt || userState.cloudInfoFailed || userState.cloudUncertain)) {
+      delete userState.cloudConflict; delete userState.lastCloudBackupAt; delete userState.cloudInfoFailed; delete userState.cloudUncertain; scheduleSaveState();
+    }
+  }
   try { s ? localStorage.setItem(SB_SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SB_SESSION_KEY); } catch {}
 }
 function sbSessionFrom(j) {
   return { at: j.access_token, rt: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, uid: j.user && j.user.id, email: j.user && j.user.email };
 }
-async function sbRequest(path, { method = 'GET', json, body, token, headers = {} } = {}) {
+async function sbRequest(path, { method = 'GET', json, body, token, headers = {}, cache } = {}) {
   const h = Object.assign({ apikey: SB_KEY }, headers);
   if (token) h.Authorization = 'Bearer ' + token;
   if (json !== undefined) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
-  return fetch(SB_URL + path, { method, headers: h, body });
+  return fetch(SB_URL + path, cache ? { method, headers: h, body, cache } : { method, headers: h, body });
 }
 async function sbError(res) {
   let msg = '';
@@ -4781,34 +4840,221 @@ async function sbToken() {
   sbStoreSession(sbSessionFrom(await res.json()));
   return sbSession.at;
 }
-async function sbUpload() {
-  const token = await sbToken();
-  if (!token) throw new Error('Non connecté');
-  const res = await sbRequest(`/storage/v1/object/backups/${sbSession.uid}/backup.json`, {
-    method: 'POST', token, body: JSON.stringify(buildBackup()), headers: { 'Content-Type': 'application/json', 'x-upsert': 'true' },
-  });
-  if (!res.ok) throw await sbError(res);
-  userState.lastCloudBackupAt = new Date().toISOString();
-  scheduleSaveState();
+// ---- Garde-fou de la sauvegarde en ligne (v133) ----
+// Comptage commun : épisodes vus (base + ajouts − retraits) et films vus d'un objet sauvegarde
+// ({data, userState}, comme celui de buildBackup()). Sert à comparer cet appareil et la copie en ligne.
+function backupCounts(b) {
+  const d = (b && b.data) || {}, us = (b && b.userState) || {};
+  // Épisodes : ensemble (clés de l'export de base ∪ clés ajoutées) moins les retraits : un ajout déjà présent dans la base n'est compté qu'une fois.
+  const keys = new Set();
+  for (const r of d.seen || []) { if (r.showId == null || r.showId === '') continue; keys.add(keyFromRecord(r)); }
+  for (const k of Object.keys(us.seenAdd || {})) keys.add(k);
+  for (const k of Object.keys(us.seenRemove || {})) keys.delete(k);
+  const eps = keys.size;
+  // Films : un film ajouté qui porte le même nom qu'un film de l'export n'est compté qu'une fois.
+  const ms = us.movieStatus || {}, seenNames = new Set();
+  let movies = 0;
+  for (const m of (d.movies || []).concat(us.customMovies || [])) {
+    if (!m || seenNames.has(m.name)) continue;
+    seenNames.add(m.name);
+    const o = ms[m.name];
+    if (((o === 'watched' || o === 'towatch') ? o : (m.status || 'towatch')) === 'watched') movies++;
+  }
+  return { eps, movies, total: eps + movies };
 }
-async function sbDownload() {
+const deviceCounts = () => backupCounts({ data: DATA, userState });
+// Y a-t-il quelque chose à protéger ? (épisodes, films, statuts de films, séries ajoutées, listes, avis)
+function hasUserData() {
+  const n = (x) => Array.isArray(x) ? x.length : (x && typeof x === 'object' ? Object.keys(x).length : 0);
+  return !!(n(DATA.seen) || n(DATA.movies) || n(userState.seenAdd) || n(userState.customMovies) || n(userState.movieStatus)
+    || n(userState.customShows) || n(userState.userLists) || n(userState.reviews));
+}
+const CLOUD_GUARD_EPS_MIN = 20;    // copie en ligne protégée si elle compte au moins 20 épisodes…
+const CLOUD_GUARD_MOVIES_MIN = 10; // …ou au moins 10 films
+const CLOUD_GUARD_RATIO = 0.9;     // et que l'appareil en a moins de 90 % (épisodes et films comparés séparément)
+const sbDir = () => `backups/${sbSession.uid}`;
+const sbObj = (name) => `/storage/v1/object/authenticated/${sbDir()}/${name}`;
+// Alerte : l'appareil est-il nettement plus pauvre que la copie en ligne ? Renvoie {eps, movies} (ce qui manque) ou null.
+function sbLow(online, dev) {
+  if (!online) return null;
+  const eps = (online.eps || 0) >= CLOUD_GUARD_EPS_MIN && dev.eps < online.eps * CLOUD_GUARD_RATIO;
+  const movies = (online.movies || 0) >= CLOUD_GUARD_MOVIES_MIN && dev.movies < online.movies * CLOUD_GUARD_RATIO;
+  return eps || movies ? { eps, movies } : null;
+}
+const sbLowText = (low) => low ? 'Il manque ' + [low.eps && 'des épisodes', low.movies && 'des films'].filter(Boolean).join(' et ') + ' sur cet appareil.' : '';
+// Petit fichier d'état de la copie en ligne : { at, eps, movies, total, prev: {at, eps, movies}, prevAt }. null s'il n'existe pas.
+let _sbInfoCache = null;
+async function sbReadInfo(token) {
+  const res = await sbRequest(sbObj('info.json'), { token, cache: 'no-store' });
+  if (res.status === 400 || res.status === 404) return null;
+  if (!res.ok) throw await sbError(res);
+  try { return await res.json(); } catch { return null; }
+}
+// Liste du dossier de l'utilisateur (UNE requête) : noms relatifs (backup.json, backup-prev.json, info.json). Échec = erreur, aucun envoi.
+async function sbList(token) {
+  const res = await sbRequest('/storage/v1/object/list/backups', { method: 'POST', token, json: { prefix: sbSession.uid, limit: 100, offset: 0 }, cache: 'no-store' });
+  if (!res.ok) throw await sbError(res);
+  const rows = await res.json();
+  if (!Array.isArray(rows)) throw new Error('Liste de la sauvegarde en ligne illisible');
+  return new Set(rows.map((r) => String(r && r.name || '').split('/').pop()));
+}
+// Comptes d'un fichier en ligne. Fichier illisible (JSON abîmé) : { unreadable: true }.
+async function sbCountsOf(name, lenient) {
+  let b;
+  try { b = await sbDownload(name); }
+  catch (e) { if (lenient || e instanceof SyntaxError) return { unreadable: true }; throw e; }
+  return b ? Object.assign({ at: b.exportedAt || null }, backupCounts(b)) : null;
+}
+// État de la copie en ligne : existence de backup.json / backup-prev.json (d'après la LISTE du dossier) et leurs comptes
+// (lus dans info.json, sinon en téléchargeant le fichier une fois). lenient (envoi forcé) : une lecture en échec = « illisible ».
+async function sbOnlineState(token, lenient) {
+  const names = await sbList(token);
+  const curExists = names.has('backup.json'), prevExists = names.has('backup-prev.json'), infoExists = names.has('info.json');
+  let info = null, infoErr = null;
+  if (infoExists) { try { info = await sbReadInfo(token); } catch (e) { infoErr = e; } }
+  const hasCounts = (x) => x && typeof x.eps === 'number' && typeof x.movies === 'number';
+  let cur = null, prev = null, curUnreadable = false;
+  if (curExists) {
+    cur = hasCounts(info) ? { at: info.at || null, eps: info.eps, movies: info.movies } : await sbCountsOf('backup.json', lenient);
+    if (cur && cur.unreadable) { cur = null; curUnreadable = true; }
+  }
+  if (prevExists) {
+    prev = hasCounts(info && info.prev) ? { at: info.prev.at || null, eps: info.prev.eps, movies: info.prev.movies } : await sbCountsOf('backup-prev.json', lenient);
+    if (prev && prev.unreadable) prev = null;
+  }
+  // Référence de comparaison : la copie actuelle ; sinon la version précédente ; sinon, à défaut, ce que dit info.json.
+  const base = cur || prev || (hasCounts(info) ? { at: info.at || null, eps: info.eps, movies: info.movies } : null);
+  // Incertain : backup.json devrait exister (info.json présent ou sauvegarde déjà faite depuis cet appareil) mais la liste ne le montre pas, ou il est illisible.
+  const uncertain = curUnreadable || (!curExists && (infoExists || !!userState.lastCloudBackupAt));
+  return { info, infoErr, curExists, prevExists, infoExists, cur, prev, base, curUnreadable, uncertain, fromPrev: !cur && !!prev };
+}
+async function sbCopy(token, from, to) {
+  return sbRequest('/storage/v1/object/copy', { method: 'POST', token, json: { bucketId: 'backups', sourceKey: `${sbSession.uid}/${from}`, destinationKey: `${sbSession.uid}/${to}` } });
+}
+const SB_JSON_HEADERS = { 'Content-Type': 'application/json', 'x-upsert': 'true', 'cache-control': 'no-cache' };
+// Envoie la sauvegarde. opts.auto = envoi silencieux ; opts.force = remplacer même si la copie en ligne est plus riche.
+// Renvoie { ok: true, infoFailed? } ou { conflict: {at, eps, movies, total, fromPrev} } (rien n'est alors envoyé).
+// backup.json n'est jamais déplacé ni supprimé : la version précédente en est une COPIE.
+async function sbUpload(opts = {}) {
   const token = await sbToken();
   if (!token) throw new Error('Non connecté');
-  const res = await sbRequest(`/storage/v1/object/authenticated/backups/${sbSession.uid}/backup.json`, { token });
+  // La sauvegarde est construite AVANT toute opération Storage (instantané cohérent, sans l'alerte de conflit).
+  const oldConflict = userState.cloudConflict, oldFileAt = userState.lastBackupAt;
+  delete userState.cloudConflict;
+  const backup = buildBackup(), body = JSON.stringify(backup), dev = backupCounts(backup);
+  const undo = () => { if (oldConflict) userState.cloudConflict = oldConflict; userState.lastBackupAt = oldFileAt; };
+  try {
+    const st = await sbOnlineState(token, !!opts.force);
+    if (!opts.force) {
+      if (st.infoErr) throw st.infoErr;
+      const low = sbLow(st.base, dev);
+      if (low) {
+        undo();
+        const conflict = { at: st.base.at || null, eps: st.base.eps || 0, movies: st.base.movies || 0, total: (st.base.eps || 0) + (st.base.movies || 0), fromPrev: st.fromPrev };
+        if (opts.auto) { userState.cloudConflict = conflict; scheduleSaveState(); }
+        return { conflict };
+      }
+      if (st.uncertain) { // copie en ligne introuvable ou illisible alors qu'elle devrait exister : jamais d'envoi sans accord
+        undo();
+        if (opts.auto) { userState.cloudUncertain = true; scheduleSaveState(); }
+        return { uncertain: true, unreadable: st.curUnreadable };
+      }
+    }
+    // 1) version précédente = COPIE de backup.json, mais seulement si la copie actuelle n'est pas plus pauvre que
+    // la précédente (sinon on garde la riche : un « Remplacer quand même » ne la fait pas disparaître le lendemain).
+    let prevKept = st.prev;
+    if (st.curExists && !st.curUnreadable) { // une copie illisible n'est pas copiée en « précédente » : on la laisse et on envoie
+      const poorer = st.prevExists && st.prev && st.cur && (st.cur.eps < st.prev.eps * CLOUD_GUARD_RATIO || st.cur.movies < st.prev.movies * CLOUD_GUARD_RATIO);
+      if (!poorer) {
+        if (st.prevExists) {
+          const d = await sbRequest(sbObj('backup-prev.json').replace('/authenticated', ''), { method: 'DELETE', token });
+          if (!d.ok && d.status !== 404 && d.status !== 400) throw new Error('La version précédente n\'a pas pu être remplacée : envoi annulé, votre sauvegarde en ligne est intacte.');
+        }
+        const cp = await sbCopy(token, 'backup.json', 'backup-prev.json');
+        if (!cp.ok && cp.status !== 404) throw new Error('La version précédente n\'a pas pu être conservée : envoi annulé, votre sauvegarde en ligne est intacte.');
+        prevKept = cp.ok ? st.cur : null;
+      }
+    }
+    // 2) la nouvelle sauvegarde
+    const res = await sbRequest(sbObj('backup.json').replace('/authenticated', ''), { method: 'POST', token, body, headers: SB_JSON_HEADERS });
+    if (!res.ok) throw await sbError(res);
+    // 3) petit fichier d'état : un échec est signalé à l'utilisateur (et info.json supprimé pour ne pas laisser un état périmé)
+    const stamp = { at: backup.exportedAt, eps: dev.eps, movies: dev.movies, total: dev.total, prev: prevKept ? { at: prevKept.at || null, eps: prevKept.eps, movies: prevKept.movies } : null, prevAt: prevKept ? (prevKept.at || null) : null };
+    let infoFailed = false;
+    try {
+      const r = await sbRequest(sbObj('info.json').replace('/authenticated', ''), { method: 'POST', token, body: JSON.stringify(stamp), headers: SB_JSON_HEADERS });
+      if (!r.ok) throw new Error('info ' + r.status);
+    } catch (e) {
+      infoFailed = true; console.warn('Sauvegarde en ligne : info.json non écrit', e);
+      try { await sbRequest(sbObj('info.json').replace('/authenticated', ''), { method: 'DELETE', token }); } catch {}
+    }
+    if (infoFailed) userState.cloudInfoFailed = true; else delete userState.cloudInfoFailed;
+    delete userState.cloudUncertain;
+    _sbInfoCache = null;
+    userState.lastCloudBackupAt = new Date().toISOString();
+    scheduleSaveState();
+    return infoFailed ? { ok: true, infoFailed: true } : { ok: true };
+  } catch (e) { undo(); throw e; }
+}
+// Lit la copie en ligne pour comparer (sert à « Remplacer quand même » : chiffres frais avant d'afficher la fenêtre).
+async function sbPeek() {
+  const token = await sbToken();
+  if (!token) throw new Error('Non connecté');
+  const st = await sbOnlineState(token);
+  const b = st.base;
+  return b ? { at: b.at || null, eps: b.eps || 0, movies: b.movies || 0, total: (b.eps || 0) + (b.movies || 0), fromPrev: st.fromPrev } : null;
+}
+async function sbDownload(name = 'backup.json') {
+  const token = await sbToken();
+  if (!token) throw new Error('Non connecté');
+  const res = await sbRequest(sbObj(name), { token, cache: 'no-store' });
   if (res.status === 400 || res.status === 404) return null; // aucune sauvegarde en ligne
   if (!res.ok) throw await sbError(res);
   return res.json();
 }
+// Libellé de date pour l'état de la sauvegarde : « aujourd'hui à 14:02 », « hier à 09:10 », « il y a 3 jours ».
+function cloudWhen(iso) {
+  const t = Date.parse(iso); if (isNaN(t)) return 'date inconnue';
+  const d = new Date(t), now = new Date();
+  const day = (x) => Math.round(new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime() / MS_DAY);
+  const n = day(now) - day(d);
+  const hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  if (n <= 0) return `aujourd'hui à ${hm}`;
+  if (n === 1) return `hier à ${hm}`;
+  if (n < 31) return `il y a ${n} jours`;
+  return fmtAgo(iso);
+}
+const cloudCountsText = (c) => `${c.eps} épisode${c.eps > 1 ? 's' : ''} et ${c.movies} film${c.movies > 1 ? 's' : ''}`;
+// Ligne d'état rassurante (haut du panneau de sauvegarde). Renvoie du HTML.
+function sbStateHtml() {
+  if (!sbSession) return '';
+  if (userState.cloudConflict) return `<div class="sb-state warn"><span>⚠️</span><span><b>Sauvegarde en ligne non mise à jour.</b> Elle contient plus de données que cet appareil : rien n'a été remplacé.</span></div>`;
+  if (userState.cloudUncertain) return `<div class="sb-state warn"><span>⚠️</span><span>La sauvegarde en ligne n'a pas pu être vérifiée : l'envoi automatique est suspendu. Touchez « Sauvegarder maintenant ».</span></div>`;
+  if (userState.cloudInfoFailed) return `<div class="sb-state warn"><span>⚠️</span><span>Sauvegarde envoyée, mais ses informations n'ont pas pu être mises à jour.</span></div>`;
+  const t = userState.lastCloudBackupAt;
+  if (!t) return `<div class="sb-state warn"><span>⚠️</span><span>Pas encore de sauvegarde en ligne depuis cet appareil.</span></div>`;
+  if (daysSince(t) > 3) return `<div class="sb-state warn"><span>⚠️</span><span>Dernière sauvegarde en ligne : ${esc(cloudWhen(t))}. Touchez « Sauvegarder maintenant ».</span></div>`;
+  return `<div class="sb-state"><span>☁️</span><span>Sauvegardé en ligne ${esc(cloudWhen(t))}</span></div>`;
+}
+// Détail du conflit (les deux comptes) + choix.
+function sbConflictHtml() {
+  const cf = userState.cloudConflict; if (!cf || !sbSession) return '';
+  const dev = deviceCounts();
+  return `<div class="sb-conflict"><p style="margin:0 0 8px">Votre sauvegarde en ligne${cf.fromPrev ? ' (version précédente)' : ''}${cf.at ? ' (' + esc(cloudWhen(cf.at)) + ')' : ''} contient <b>${esc(cloudCountsText(cf))}</b>, alors que cet appareil n'en contient que <b>${esc(cloudCountsText(dev))}</b>. ${esc(sbLowText(sbLow(cf, dev)))} Pour ne rien perdre, l'envoi automatique est suspendu.</p>
+    <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="sbRestoreConflict">Restaurer la sauvegarde en ligne</button><button class="btn ghost" id="sbForce">Remplacer quand même</button></div></div>`;
+}
 function sbPanelHtml() {
   let inner;
   if (sbSession) {
-    inner = `<p class="hint" style="color:var(--muted)">Connecté : <b>${esc(sbSession.email || '')}</b><br>
-      Dernière sauvegarde en ligne : <b>${esc(fmtAgo(userState.lastCloudBackupAt))}</b></p>
+    inner = `${sbStateHtml()}${sbConflictHtml()}
+      <p class="hint" style="color:var(--muted)">Connecté : <b>${esc(sbSession.email || '')}</b></p>
       <div class="row" style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn primary" id="sbSave">☁️ Sauvegarder maintenant</button>
         <button class="btn" id="sbRestore">Restaurer</button>
         <button class="btn ghost" id="sbLogout">Se déconnecter</button>
-      </div><span id="sbStatus" class="sub"></span>
+      </div>
+      <p style="margin:8px 0 0"><button class="btn ghost sm" id="sbPrev">Restaurer la version précédente</button></p>
+      <span id="sbStatus" class="sub"></span>
       <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">🔑 Choisir ou changer mon mot de passe</summary>
         <p class="hint" style="color:var(--muted)">Utile si vous vous êtes connecté avec un lien reçu par e-mail : ensuite, vous vous connecterez avec votre e-mail et ce mot de passe (6 caractères minimum).</p>
         <input class="input" id="sbNewPw" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe">
@@ -4816,9 +5062,9 @@ function sbPanelHtml() {
         <div class="row" style="margin-top:8px"><button class="btn" id="sbSetPw">Enregistrer le mot de passe</button> <span id="sbPwStatus" class="sub"></span></div>
       </details>`;
   } else {
-    inner = `<p class="hint" style="color:var(--muted)">Connectez-vous pour garder votre historique en sécurité sur Internet (une seule sauvegarde privée, mise à jour automatiquement chaque jour) et pour retrouver vos amis.</p>
+    inner = `<p class="hint" style="color:var(--text2);margin-top:0">Créez un compte gratuit : votre historique est sauvegardé automatiquement chaque jour, et vous pouvez retrouver vos amis.</p>
       <input class="input" id="sbEmail" type="email" autocomplete="email" placeholder="Votre e-mail" value="${esc(sbPendingEmail || '')}">
-      <input class="input" id="sbPw" type="password" autocomplete="current-password" placeholder="Mot de passe (6 caractères minimum)" style="margin-top:8px">
+      <input class="input" id="sbPw" type="password" autocomplete="current-password" placeholder="Mot de passe (6 car. min.)" style="margin-top:8px">
       <input class="input" id="sbPw2" type="password" autocomplete="new-password" placeholder="Confirmez le mot de passe (nouveau compte)" style="margin-top:8px" hidden>
       <div class="row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
         <button class="btn primary" id="sbLogin">Se connecter</button>
@@ -4826,13 +5072,13 @@ function sbPanelHtml() {
       </div>
       <span id="sbStatus" class="sub"></span>
       <p style="margin:8px 0 0"><button type="button" class="btn ghost sm" id="sbForgot">Mot de passe oublié ?</button></p>
-      <details style="margin-top:12px"><summary class="hint" style="color:var(--muted);cursor:pointer">Autre façon : recevoir un lien par e-mail</summary>
-        <p class="hint" style="color:var(--muted)">Pour un compte créé avant les mots de passe, ou en cas d'oubli : recevez un lien de connexion (au plus 2 e-mails par heure pour tout le monde), puis choisissez un mot de passe dans Mon compte.</p>
+      <details style="margin-top:12px"${sbPendingEmail ? ' open' : ''}><summary class="hint" style="color:var(--muted);cursor:pointer">Autres façons de se connecter</summary>
+        <p class="hint" style="margin-bottom:0"><b>Recevoir un lien par e-mail</b></p>
+        <p class="hint" style="color:var(--muted);margin-top:4px">Pour un compte créé avant les mots de passe, ou en cas d'oubli : recevez un lien de connexion (au plus 2 e-mails par heure pour tout le monde), puis choisissez un mot de passe dans Mon compte.</p>
         <div class="row" style="margin-top:8px"><button class="btn" id="sbSend">Recevoir le lien</button></div>
         ${sbPendingEmail ? '<p class="hint" style="color:var(--muted)">✉️ Lien envoyé : ouvrez l\'e-mail (regardez aussi les indésirables) et touchez « Sign in ».</p>' : ''}
-      </details>
-      <details style="margin-top:8px"><summary class="hint" style="color:var(--muted);cursor:pointer">Le lien ne m'a pas connecté (iPhone…)</summary>
-        <p class="hint" style="color:var(--muted)">Deux possibilités :<br>
+        <p class="hint" style="margin:16px 0 0"><b>Le lien ne m'a pas connecté (iPhone…)</b></p>
+        <p class="hint" style="color:var(--muted);margin-top:4px">Deux possibilités :<br>
           • Vous avez touché le lien et Safari s'est ouvert : Safari affiche un <b>code</b> à copier, collez-le ici.<br>
           • Ou, dans l'e-mail, faites un <b>appui long</b> sur « Sign in » → « Copier le lien » (sans le toucher avant : un lien ne sert qu'une fois), puis collez-le ici.</p>
         <input class="input" id="sbLink" placeholder="Collez le lien ou le code ici">
@@ -4845,7 +5091,7 @@ function sbWirePanel(el) {
   const st = el.querySelector('#sbStatus');
   const say = (t) => { if (st) st.textContent = t; };
   const on = (id, fn) => { const b = el.querySelector(id); if (b) b.onclick = async () => {
-    if (sbBusy) return; sbBusy = true; b.disabled = true;
+    if (sbBusy || sbRestoring) return; sbBusy = true; b.disabled = true;
     try { await fn(); } catch (e) { say('❌ ' + (e && e.message ? e.message : 'Échec (êtes-vous en ligne ?)')); b.disabled = false; }
     sbBusy = false;
   }; };
@@ -4890,22 +5136,116 @@ function sbWirePanel(el) {
     say('Vérification…'); await sbSignInWithLink(el.querySelector('#sbLink').value); toast('Connecté'); render();
   });
   on('#sbLogout', async () => { sbStoreSession(null); render(); });
-  on('#sbSave', async () => { say('Envoi…'); await sbUpload(); toast('☁️ Sauvegarde en ligne faite'); render(); });
-  on('#sbRestore', async () => {
+  // Envoi manuel : si la copie en ligne est nettement plus riche, on demande confirmation (deux comptes affichés).
+  on('#sbSave', async () => {
+    say('Envoi…');
+    const r = await sbUpload();
+    if (r.conflict) { say(''); el.querySelector('#sbSave').disabled = false; sbConfirmReplace(r.conflict); return; }
+    if (r.uncertain) {
+      say(''); el.querySelector('#sbSave').disabled = false;
+      sbBusy = false; // la fenêtre attend l'utilisateur ; l'envoi forcé reprend le verrou lui-même
+      const ok = await askModal(`<h2>⚠️ Sauvegarde en ligne introuvable</h2><p>${r.unreadable ? 'Votre sauvegarde en ligne ne peut pas être lue (fichier abîmé ?).' : 'Votre sauvegarde en ligne principale n\'apparaît plus alors qu\'elle devrait exister.'} Voulez-vous quand même envoyer celle de cet appareil ?</p>`, 'Annuler', 'Envoyer quand même');
+      if (ok && !sbBusy) {
+        sbBusy = true;
+        try { await sbUpload({ force: true }); toast('☁️ Sauvegarde en ligne faite'); } catch (e) { say('❌ ' + (e && e.message ? e.message : 'Échec')); }
+        sbBusy = false; render();
+      }
+      sbBusy = true; // rendu à on() qui le relâche
+      return;
+    }
+    toast(r.infoFailed ? '⚠️ Sauvegarde envoyée, mais ses informations n\'ont pas pu être mises à jour' : '☁️ Sauvegarde en ligne faite'); render();
+  });
+  const restoreFrom = async (name, label, btnSel) => {
     say('Recherche…');
-    const parsed = await sbDownload();
-    if (!parsed) { say('Aucune sauvegarde en ligne pour ce compte.'); el.querySelector('#sbRestore').disabled = false; return; }
-    const when = parsed.exportedAt ? fmtAgo(parsed.exportedAt) : 'date inconnue';
-    if (!confirm(`Restaurer la sauvegarde en ligne (${when}) ? Elle remplacera les données de cet appareil.`)) { say(''); el.querySelector('#sbRestore').disabled = false; return; }
-    await applyBackup(parsed);
+    let parsed = await sbDownload(name);
+    const btn = el.querySelector(btnSel);
+    if (!parsed && name === 'backup.json') {
+      const p = await sbDownload('backup-prev.json');
+      if (p) {
+        say('');
+        const ok = await askModal(`<h2>Sauvegarde principale introuvable</h2><p>Votre sauvegarde en ligne principale est introuvable, mais une <b>version précédente</b>${p.exportedAt ? ' (' + esc(cloudWhen(p.exportedAt)) + ')' : ''} existe. Voulez-vous la restaurer à la place ?</p>`, 'Annuler', 'Voir la version précédente');
+        if (!ok) { if (btn) btn.disabled = false; return; }
+        parsed = p; label = 'la version précédente de la sauvegarde en ligne';
+      }
+    }
+    if (!parsed) { say(name === 'backup.json' ? 'Aucune sauvegarde en ligne pour ce compte.' : 'Aucune version précédente en ligne.'); if (btn) btn.disabled = false; return; }
+    say('');
+    // Fenêtre de confirmation chiffrée + copie de secours : dans applyBackup.
+    let applied = false;
+    try { applied = await applyBackup(parsed, { label }); } catch (e) { console.error(e); showNotice('Erreur', 'La restauration n’a pas pu aboutir. Rien n’a été perdu.'); }
+    if (applied) {
+      userState.cloudConflict = null; scheduleSaveState(); // restauré : plus de décalage avec la copie en ligne
+      render();
+    } else if (btn) btn.disabled = false;
+  };
+  // Boutons « Restaurer » : pas via on() (qui garde sbBusy pendant tout le clic, ce qui bloquait applyBackup). Leur propre
+  // protection : sbRestoring (double clic ignoré, pas d'envoi automatique) ; sbBusy est posé par applyBackup lui-même.
+  const restoreBtn = (id, name, label) => { const b = el.querySelector(id); if (b) b.onclick = async () => {
+    if (sbBusy || sbRestoring) return; sbRestoring = true; b.disabled = true;
+    try { await restoreFrom(name, label, id); }
+    catch (e) { say('❌ ' + (e && e.message ? e.message : 'Échec (êtes-vous en ligne ?)')); b.disabled = false; }
+    finally { sbRestoring = false; }
+  }; };
+  restoreBtn('#sbRestore', 'backup.json', 'la sauvegarde en ligne');
+  restoreBtn('#sbRestoreConflict', 'backup.json', 'la sauvegarde en ligne');
+  restoreBtn('#sbPrev', 'backup-prev.json', 'la version précédente de la sauvegarde en ligne');
+  const force = el.querySelector('#sbForce');
+  if (force) force.onclick = async () => {
+    if (sbBusy) return; sbBusy = true; force.disabled = true; say('Vérification…');
+    try {
+      const fresh = await sbPeek(); say('');
+      if (!fresh || !sbLow(fresh, deviceCounts())) { delete userState.cloudConflict; scheduleSaveState(); toast('Plus de décalage avec la sauvegarde en ligne'); sbBusy = false; render(); return; }
+      userState.cloudConflict = fresh; scheduleSaveState();
+      sbBusy = false; sbConfirmReplace(fresh); force.disabled = false; return;
+    } catch (e) { say('❌ ' + (e && e.message ? e.message : 'Échec (êtes-vous en ligne ?)')); force.disabled = false; }
+    sbBusy = false;
+  };
+  // Date de la version précédente dans le libellé du bouton (lue dans info.json, sans bloquer l'affichage).
+  const prevBtn = el.querySelector('#sbPrev');
+  if (prevBtn && sbSession) sbLoadInfo().then((i) => {
+    const pa = i && ((i.prev && i.prev.at) || i.prevAt);
+    if (pa && prevBtn.isConnected) prevBtn.textContent = `Restaurer la version précédente (${new Date(pa).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })})`;
+  }).catch(() => {});
+}
+async function sbLoadInfo() {
+  if (_sbInfoCache && Date.now() - _sbInfoCache.t < 60000) return _sbInfoCache.v;
+  const token = await sbToken(); if (!token) return null;
+  const v = await sbReadInfo(token);
+  _sbInfoCache = { t: Date.now(), v };
+  return v;
+}
+// Fenêtre de confirmation avant de remplacer une sauvegarde en ligne plus riche que cet appareil.
+function sbConfirmReplace(online) {
+  const dev = deviceCounts();
+  showModal(`
+    <h2 style="margin:0 0 6px">⚠️ Remplacer la sauvegarde en ligne ?</h2>
+    <p class="hint" style="color:var(--text2)">Votre sauvegarde en ligne${online.at ? ' (' + esc(cloudWhen(online.at)) + ')' : ''} contient <b>${esc(cloudCountsText(online))}</b>.<br>
+      Cet appareil n'en contient que <b>${esc(cloudCountsText(dev))}</b>. ${esc(sbLowText(sbLow(online, dev)))}</p>
+    <p class="hint" style="color:var(--muted)">Si vous continuez, la sauvegarde en ligne sera remplacée par celle de cet appareil (l'ancienne reste disponible une fois via « Restaurer la version précédente »).</p>
+    <div class="modal-actions" style="margin-top:12px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+      <button class="btn ghost" data-close>Annuler</button>
+      <button class="btn danger" id="sbReplaceOk">Remplacer quand même</button>
+    </div>`, (root) => {
+    root.querySelector('#sbReplaceOk').onclick = async () => {
+      if (sbBusy) return; sbBusy = true;
+      try { const r = await sbUpload({ force: true }); closeModal(); toast(r.infoFailed ? '⚠️ Sauvegarde remplacée, mais ses informations n\'ont pas pu être mises à jour' : '☁️ Sauvegarde en ligne remplacée'); }
+      catch (e) { closeModal(); toast('❌ ' + (e && e.message ? e.message : 'Échec de l\'envoi')); }
+      sbBusy = false; render();
+    };
   });
 }
-// Sauvegarde en ligne silencieuse, une fois par jour, quand on est connecté.
+// Sauvegarde en ligne silencieuse, une fois par jour, quand on est connecté. Si la copie en ligne est
+// nettement plus riche que cet appareil, rien n'est envoyé : le conflit est mémorisé et affiché dans Mon compte.
 const CLOUD_BACKUP_EVERY_DAYS = 1;
+let _sbConflictCheckAt = 0;
 function sbMaybeAutoBackup() {
-  if (!sbSession || sbBusy || daysSince(userState.lastCloudBackupAt) < CLOUD_BACKUP_EVERY_DAYS) return false;
+  if (!sbSession || sbBusy || sbRestoring || daysSince(userState.lastCloudBackupAt) < CLOUD_BACKUP_EVERY_DAYS) return false;
+  if (userState.cloudConflict) { // conflit en attente : on revérifie au plus toutes les 30 min (il peut s'être résolu)
+    if (Date.now() - _sbConflictCheckAt < 1800000) return false;
+    _sbConflictCheckAt = Date.now();
+  }
   sbBusy = true;
-  sbUpload().catch(() => {}).finally(() => { sbBusy = false; }); // silencieux : réessayé à la prochaine ouverture si échec
+  sbUpload({ auto: true }).then((r) => { if (r && document.getElementById('sbPanel')) render(); }).catch((e) => console.warn('Sauvegarde en ligne automatique', e)).finally(() => { sbBusy = false; }); // silencieux : réessayé à la prochaine ouverture si échec
   return true;
 }
 
@@ -5382,17 +5722,19 @@ const BACKUP_EVERY_DAYS = 7;
 // une fois par semaine, on propose d'enregistrer une sauvegarde dans un fichier (Toujours le même nom).
 function maybeWeeklyBackup() {
   if (serverAvailable) return;
-  if (!(DATA.seen || []).length && !Object.keys(userState.seenAdd || {}).length) return;
+  if (!hasUserData()) return;
   if (sbSession) { sbMaybeAutoBackup(); return; } // connecté : sauvegarde en ligne quotidienne, pas de bannière
+  if (/^#\/profile/.test(location.hash)) return; // Mon compte : le formulaire de connexion est déjà là
   if (userState.weeklyBackup === false) return;
   if (Date.now() < (userState.backupSnoozeUntil || 0)) return;
   if (daysSince(userState.lastBackupAt) < BACKUP_EVERY_DAYS) return;
   if (document.querySelector('.backup-banner')) return;
-  const last = userState.lastBackupAt ? `Dernière : ${fmtAgo(userState.lastBackupAt)}.` : 'Aucune sauvegarde pour l\'instant.';
+  const last = userState.lastBackupAt ? ` Dernier fichier enregistré : ${fmtAgo(userState.lastBackupAt).replace(/\.$/, '')}.` : '';
   const bar = document.createElement('div');
   bar.className = 'backup-banner';
-  bar.innerHTML = `<div class="bb-text"><b>🛟 Sauvegarde de la semaine</b><span>${esc(last)} Protège votre historique si les données du navigateur sont effacées.</span></div>
-    <div class="bb-actions"><button class="btn sm ghost" data-bb="later">Plus tard</button><button class="btn sm primary" data-bb="save">Enregistrer</button></div>`;
+  bar.innerHTML = `<div class="bb-text"><b>🛟 Gardez votre historique en sécurité</b><span>Avec un compte gratuit, une copie privée est enregistrée en ligne chaque jour, sans rien à faire.${esc(last)}</span></div>
+    <div class="bb-actions"><button class="btn sm primary" data-bb="acct">Activer la sauvegarde automatique</button><button class="btn sm ghost" data-bb="save">Enregistrer un fichier</button><button class="btn sm ghost" data-bb="later">Plus tard</button></div>`;
+  bar.querySelector('[data-bb="acct"]').onclick = () => { userState.backupSnoozeUntil = Date.now() + MS_DAY; scheduleSaveState(); bar.remove(); navTo('#/profile'); };
   bar.querySelector('[data-bb="save"]').onclick = () => { exportData('tvtime-sauvegarde-hebdo.json'); bar.remove(); toast('Sauvegarde enregistrée dans Téléchargements'); };
   bar.querySelector('[data-bb="later"]').onclick = () => { userState.backupSnoozeUntil = Date.now() + MS_DAY; scheduleSaveState(); bar.remove(); };
   document.body.appendChild(bar);
@@ -5571,40 +5913,237 @@ async function persistDataOverride(obj) {
   await idbSet('dataOverride', obj);
   try { localStorage.setItem('montvtime_dataOverride', JSON.stringify(obj)); } catch {}
 }
+// ---- Import / restauration sûrs (v133) ----
+// Clés de userState propres à CET appareil : jamais écrasées par une restauration (rappels de sauvegarde, état de la copie en ligne).
+const RESTORE_DEVICE_KEYS = ['lastCloudBackupAt', 'cloudConflict', 'cloudInfoFailed', 'cloudUncertain', 'lastBackupAt', 'backupSnoozeUntil', 'weeklyBackup'];
+// Gardées seulement si la sauvegarde n'en contient pas (clé TMDB, préférences d'affichage, options de partage du profil).
+const RESTORE_FILL_KEYS = ['tmdbKey', 'prefs', 'share'];
+// Seuls éléments importés quand l'historique de l'appareil est plus complet que celui du fichier.
+const RESTORE_SETTINGS_KEYS = ['tmdbKey', 'prefs', 'share', 'homeOrder', 'profileName', 'amoled'];
+const _isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+const _nkeys = (o) => (o && typeof o === 'object') ? Object.keys(o).length : 0;
+const _fmtWhen = (iso) => { const t = Date.parse(iso); return isNaN(t) ? 'date inconnue' : new Date(t).toLocaleString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+
+// Reconnaît le contenu d'un fichier : 'shared' (liste d'un ami), 'full' (sauvegarde complète), 'legacy' (ancien format = seulement userState) ou null.
+function backupKind(p) {
+  if (!_isObj(p)) return null;
+  if (p.format === 'tvtime-sharedlist') return (Array.isArray(p.shows) || Array.isArray(p.movies)) ? 'shared' : null;
+  const d = p.data;
+  const arr = (x) => x == null || Array.isArray(x), objn = (x) => x == null || _isObj(x);
+  const us = p.userState;
+  if (_isObj(d) && (Array.isArray(d.shows) || Array.isArray(d.seen) || Array.isArray(d.movies)) && arr(d.shows) && arr(d.seen) && arr(d.movies)
+    && (us == null || (_isObj(us) && arr(us.customMovies) && arr(us.customShows) && arr(us.userLists) && objn(us.seenAdd) && objn(us.seenRemove) && objn(us.movieStatus)))) return 'full';
+  if (p.format != null && p.format !== 'tvtime-full') return null;
+  if (p.data != null) return null;
+  const maps = ['seenAdd', 'seenRemove', 'ratings', 'emotions', 'movieStatus', 'movieRatings', 'rewatch', 'favShows', 'favMovies', 'showTmdb', 'movieTmdb'];
+  const lists = ['customMovies', 'customShows', 'userLists'];
+  const ok = maps.some((k) => _isObj(p[k])) || lists.some((k) => Array.isArray(p[k]));
+  const bad = maps.some((k) => p[k] != null && !_isObj(p[k])) || lists.some((k) => p[k] != null && !Array.isArray(p[k]));
+  return ok && !bad ? 'legacy' : null;
+}
+// Date de la dernière modification connue sur cet appareil (épisodes cochés, films vus, revisionnages, avis, sauvegardes).
+function deviceLastChange() {
+  let best = 0;
+  const take = (s) => { if (!s) return; const t = Date.parse(/^\d{4}-\d\d-\d\d \d/.test(String(s)) ? String(s).replace(' ', 'T') + 'Z' : String(s)); if (t > best) best = t; };
+  for (const v of Object.values(userState.seenAdd || {})) take(v && v.at);
+  for (const v of Object.values(userState.movieWatchedAt || {})) take(v);
+  for (const v of Object.values(userState.rewatchActivity || {})) take(v);
+  for (const v of Object.values(userState.reviews || {})) take(v && v.at);
+  take(userState.lastBackupAt); take(userState.lastCloudBackupAt);
+  return best || null;
+}
+// Chiffres et avertissements affichés avant une restauration.
+function restoreInfo(p, kind) {
+  const info = { kind, at: p.exportedAt || p.at || null, warns: [], poorer: false };
+  if (kind === 'legacy') {
+    const mv = (us) => Object.values((us && us.movieStatus) || {}).filter((v) => v === 'watched').length;
+    info.bc = { eps: _nkeys(p.seenAdd), movies: mv(p) };
+    info.dc = { eps: _nkeys(userState.seenAdd), movies: mv(userState) };
+    return info;
+  }
+  info.bc = backupCounts(p);
+  info.dc = deviceCounts();
+  const cat = p.data;
+  info.poorer = (cat.seen || []).length < (DATA.seen || []).length / 2 || (cat.movies || []).length < (DATA.movies || []).length / 2;
+  const last = deviceLastChange(), t = Date.parse(info.at);
+  if (isNaN(t)) info.warns.push('La date de cette sauvegarde est inconnue.');
+  else if (last && t < last - 600000) info.warns.push(`Cette sauvegarde est plus ancienne que votre dernière modification sur cet appareil (${_fmtWhen(new Date(last).toISOString())}) : ce que vous avez fait depuis sera remplacé.`);
+  const le = info.dc.eps - info.bc.eps, lm = info.dc.movies - info.bc.movies;
+  if (le > 0 || lm > 0) info.warns.push('Elle contient moins de choses que cet appareil (' + [le > 0 ? `${le} épisode${le > 1 ? 's' : ''} de moins` : '', lm > 0 ? `${lm} film${lm > 1 ? 's' : ''} de moins` : ''].filter(Boolean).join(' et ') + ').');
+  return info;
+}
+// Fenêtre de confirmation générique : renvoie true si on valide, false si on annule (bouton ou fond).
+function askModal(bodyHtml, noLabel, yesLabel) {
+  return new Promise((resolve) => {
+    let done = false;
+    const fin = (v) => { if (done) return; done = true; closeModal(); resolve(v); };
+    showModal(`${bodyHtml}<div class="rs-actions"><button class="btn ghost" id="rsNo">${esc(noLabel)}</button><button class="btn primary" id="rsYes">${esc(yesLabel)}</button></div>`, (root) => {
+      const bd = root.querySelector('.backdrop');
+      bd.addEventListener('click', (e) => { if (e.target === bd) fin(false); });
+      root.querySelector('#rsNo').onclick = () => fin(false);
+      root.querySelector('#rsYes').onclick = () => fin(true);
+    });
+  });
+}
+function showNotice(title, text) {
+  showModal(`<h2>${esc(title)}</h2><p>${text}</p><div class="rs-actions"><button class="btn primary" data-close>OK</button></div>`);
+}
+function askRestore(info, label) {
+  const rows = info.kind === 'legacy'
+    ? [['Épisodes cochés', info.bc.eps, info.dc.eps], ['Films vus', info.bc.movies, info.dc.movies]]
+    : [['Épisodes vus', info.bc.eps, info.dc.eps], ['Films vus', info.bc.movies, info.dc.movies]];
+  const warns = info.warns.filter((w) => !(info.poorer && /^Elle contient moins/.test(w))).map((w) => `<div class="rs-warn">⚠️ ${esc(w)}</div>`); // « poorer » : le message ℹ️ suffit (l'historique de l'appareil est conservé)
+  if (info.poorer) warns.unshift(`<div class="rs-warn rs-info">ℹ️ L'historique de cette sauvegarde est beaucoup plus petit que celui de cet appareil : <b>votre historique, plus complet, sera conservé ; seuls les réglages seront importés.</b></div>`);
+  if (info.kind === 'legacy') warns.unshift(`<div class="rs-warn rs-info">ℹ️ Ancien format de sauvegarde (sans l'historique TV Time) : seuls les éléments qu'il contient (épisodes cochés, notes, listes…) remplaceront les vôtres.</div>`);
+  const what = info.poorer ? 'Importer ces réglages ?' : 'Restaurer ' + label + ' ?';
+  return askModal(`
+    <h2>${esc(what)}</h2>
+    <p style="margin:0 0 10px">${info.at && !isNaN(Date.parse(info.at)) ? `Sauvegarde du <b>${esc(_fmtWhen(info.at))}</b> (${esc(fmtAgo(info.at))}).` : 'Date de la sauvegarde : <b>inconnue</b>.'}</p>
+    <div class="rs-table">
+      <div class="rs-row rs-head"><span></span><span>Sauvegarde</span><span>Cet appareil</span></div>
+      ${rows.map((r) => `<div class="rs-row"><span>${r[0]}</span><b>${r[1]}</b><b>${r[2]}</b></div>`).join('')}
+    </div>
+    ${warns.join('')}
+    <p style="margin:10px 0 0">Une copie de votre état actuel est faite juste avant : vous pourrez revenir en arrière dans Réglages (« Revenir à l’état du… »).</p>`, 'Annuler', 'Restaurer');
+}
+// Remet userState dans l'état de la sauvegarde (clés absentes = valeurs d'origine), en gardant les réglages propres à l'appareil.
+function replaceUserState(newUs) {
+  const keep = {}; for (const k of RESTORE_DEVICE_KEYS) if (k in userState) keep[k] = userState[k];
+  const fill = {}; for (const k of RESTORE_FILL_KEYS) fill[k] = userState[k];
+  const seenCl = userState.seenChangelog || 0;
+  for (const k of Object.keys(userState)) delete userState[k];
+  Object.assign(userState, JSON.parse(JSON.stringify(USERSTATE_DEFAULTS)), newUs);
+  for (const k of RESTORE_DEVICE_KEYS) { if (k in keep) userState[k] = keep[k]; else delete userState[k]; }
+  for (const k of RESTORE_FILL_KEYS) { const v = userState[k]; if ((v == null || v === '') && fill[k]) userState[k] = fill[k]; }
+  userState.seenChangelog = Math.max(seenCl, userState.seenChangelog || 0);
+}
 function importData(ev) {
-  const f = ev.target.files[0]; if (!f) return;
+  const inp = ev.target, f = inp.files[0]; if (!f) return;
   const r = new FileReader();
+  r.onerror = () => { inp.value = ''; showNotice('Fichier illisible', 'Ce fichier n’a pas pu être lu. Rien n’a été modifié.'); };
   r.onload = async () => {
-    try { await applyBackup(JSON.parse(r.result)); } catch { toast('Fichier invalide'); }
+    let parsed;
+    try { parsed = JSON.parse(r.result); }
+    catch { inp.value = ''; showNotice('Fichier illisible', 'Ce fichier est abîmé ou n’est pas un fichier de sauvegarde. Rien n’a été modifié.'); return; }
+    try { await applyBackup(parsed, { label: 'ce fichier' }); }
+    catch (e) { console.error(e); showNotice('Erreur', 'La sauvegarde n’a pas pu être appliquée. Rien n’a été modifié.'); }
+    inp.value = '';
   };
   r.readAsText(f);
 }
-// Applique le contenu d'un fichier de sauvegarde (importé ou téléchargé depuis Supabase).
-async function applyBackup(parsed) {
-  if (parsed && parsed.format === 'tvtime-sharedlist') {
-    // Liste partagée par un ami : on fusionne sans rien écraser ni marquer vu.
+// Applique le contenu d'un fichier de sauvegarde (importé ou téléchargé depuis Supabase) après confirmation chiffrée
+// et copie de secours. Renvoie true si quelque chose a été appliqué.
+async function applyBackup(parsed, opts = {}) {
+  const kind = backupKind(parsed);
+  if (!kind) { showNotice('Ce n’est pas une sauvegarde Mon TV Time', 'Le fichier a été lu, mais son contenu n’est pas celui d’une sauvegarde de l’application. Rien n’a été modifié.'); return false; }
+  if (kind === 'shared') {
+    // Liste partagée par un ami : on fusionne sans rien écraser ni marquer vu (le résumé s'affiche à la fin).
     await mergeSharedList(parsed);
-    return;
+    return true;
   }
-  const cat = parsed && parsed.data && (parsed.data.shows || parsed.data.seen) ? parsed.data : null;
-  if (cat) {
-    // Sauvegarde complète : restaure le catalogue (historique) durablement — sauf si le
-    // fichier en contient beaucoup moins que l'app (ex. une simple liste) : on garde le nôtre.
-    const poorer = (cat.seen || []).length < (DATA.seen || []).length / 2 || (cat.movies || []).length < (DATA.movies || []).length / 2;
-    if (!poorer) { applyDataObject(cat); await persistDataOverride(cat); }
-    if (parsed.userState && typeof parsed.userState === 'object') userState = Object.assign(userState, parsed.userState);
-    const merged = reconcileDuplicateMovies();
-    scheduleSaveState();
-    MODEL = null;
-    toast((poorer ? 'Réglages importés — votre historique, plus complet, a été conservé' : 'Sauvegarde complète restaurée') + (merged ? ` · ${merged} film(s) en double fusionné(s)` : ''));
+  const info = restoreInfo(parsed, kind);
+  if (!(await askRestore(info, opts.label || 'cette sauvegarde'))) return false;
+  if (sbBusy) { showNotice('Opération en ligne en cours', 'Une opération avec votre compte en ligne est en cours. Réessayez dans un instant. Rien n’a été modifié.'); return false; }
+  sbBusy = true; // pas d'envoi automatique en ligne au milieu de la restauration
+  let pre = null;
+  try {
+    // État d'avant en mémoire : sert à tout remettre tout de suite si la restauration échoue en route.
+    pre = { userState: JSON.parse(JSON.stringify(userState)), data: Object.assign({}, DATA) };
+    // Copie de secours dans IndexedDB (annulable depuis Réglages). Une copie de moins de 24 h n'est jamais écrasée
+    // (sauf une copie « retour » issue d'une annulation) : une 2e restauration ne doit pas faire perdre l'état d'origine.
+    const old = await idbGet('avantRestauration');
+    const keepOld = old && old.userState && old.kind !== 'redo' && Date.now() - Date.parse(old.at) < 86400000;
+    if (!keepOld) {
+      const saved = await idbSet('avantRestauration', { at: new Date().toISOString(), userState: pre.userState, data: DATA });
+      if (!saved) { showNotice('Restauration annulée', 'La copie de secours n’a pas pu être faite sur cet appareil (stockage indisponible ou plein). Par prudence, rien n’a été modifié.'); return false; }
+    }
+    let merged = 0;
+    if (kind === 'full') {
+      const cat = parsed.data;
+      if (!info.poorer) {
+        applyDataObject(cat); await persistDataOverride(cat);
+        if (parsed.userState) { replaceUserState(parsed.userState); cleanRestoredReviews(); }
+      } else if (parsed.userState) {
+        // Historique de l'appareil plus complet : on garde le catalogue et les épisodes, on n'importe que les réglages.
+        for (const k of RESTORE_SETTINGS_KEYS) { const v = parsed.userState[k]; if (v != null && v !== '') userState[k] = v; }
+      }
+      merged = reconcileDuplicateMovies();
+    } else {
+      for (const k of Object.keys(parsed)) if (!RESTORE_DEVICE_KEYS.includes(k) && legacyValueOk(k, parsed[k])) userState[k] = parsed[k];
+      cleanRestoredReviews();
+    }
+    repairSeenAddDup();
+    afterStateSwap();
+    toast((info.poorer ? 'Réglages importés — votre historique, plus complet, a été conservé' : kind === 'legacy' ? 'Données importées' : 'Sauvegarde complète restaurée') + (merged ? ` · ${merged} film(s) en double fusionné(s)` : ''));
     render();
-  } else {
-    // Ancien format : uniquement les éditions utilisateur.
-    userState = Object.assign(userState, parsed);
-    scheduleSaveState();
-    toast('Données importées');
+    return true;
+  } catch (e) {
+    console.error(e);
+    let back = false;
+    try { if (pre) { await putState(pre); afterStateSwap(); back = true; } } catch (e2) { console.error(e2); }
+    showNotice('Erreur pendant la restauration', back
+      ? 'La restauration n’a pas pu aboutir. Rien n’a été perdu : votre état d’avant a été remis tel quel.'
+      : 'La restauration n’a pas pu aboutir. Rien n’a été perdu : une copie de votre état d’avant est gardée, utilisez « Revenir à l’état du… » dans Réglages.');
     render();
+    return false;
+  } finally { sbBusy = false; }
+}
+// Remet un état {userState, data} en place (catalogue + userState, en place).
+async function putState(s) {
+  if (s.data) { applyDataObject(s.data); await persistDataOverride(s.data); }
+  for (const k of Object.keys(userState)) delete userState[k];
+  Object.assign(userState, s.userState);
+}
+// Après un changement complet d'état : corrections d'affiches et thème appliqués sans recharger.
+function afterStateSwap() {
+  MODEL = null;
+  applyTmdbOverrides(); applyTheme();
+  scheduleSaveState();
+}
+// Avis restaurés : rien ne repart en ligne tout seul (ni ancien avis renvoyé, ni suppression d'un avis récent).
+function cleanRestoredReviews() {
+  for (const k of Object.keys(userState.reviews || {})) if (userState.reviews[k] && typeof userState.reviews[k] === 'object') userState.reviews[k].pending = false;
+  userState.reviewDeletes = [];
+}
+// Ancien format : une clé n'est acceptée que si son type correspond à celui de userState.
+const LEGACY_EXTRA_TYPES = { reviews: 'object', reviewDeletes: 'array', prefs: 'object', share: 'object' };
+function legacyValueOk(k, v) {
+  const kindOf = (x) => Array.isArray(x) ? 'array' : x === null ? 'null' : typeof x;
+  if (k in USERSTATE_DEFAULTS) {
+    const d = USERSTATE_DEFAULTS[k];
+    if (d === null) return v === null || Array.isArray(v);
+    return kindOf(v) === kindOf(d);
   }
+  return k in LEGACY_EXTRA_TYPES && kindOf(v) === LEGACY_EXTRA_TYPES[k];
+}
+// « Revenir à l'état d'avant » : échange l'état actuel avec la copie de secours (l'état actuel devient la nouvelle copie : on peut re-basculer).
+async function undoLastRestore() {
+  const s = await idbGet('avantRestauration');
+  if (!s || !s.userState) { toast('Aucune copie de secours'); return false; }
+  const cur = deviceCounts(), tgt = backupCounts({ data: s.data, userState: s.userState });
+  const ok = await askModal(`<h2>Revenir à l'état du ${esc(_fmtWhen(s.at))} ?</h2>
+    <div class="rs-table">
+      <div class="rs-row rs-head"><span></span><span>État actuel</span><span>Après le retour</span></div>
+      <div class="rs-row"><span>Épisodes vus</span><b>${cur.eps}</b><b>${tgt.eps}</b></div>
+      <div class="rs-row"><span>Films vus</span><b>${cur.movies}</b><b>${tgt.movies}</b></div>
+    </div>
+    <p style="margin:10px 0 0">L'état actuel est gardé : vous pourrez y revenir avec le même bouton.</p>`, 'Annuler', 'Revenir en arrière');
+  if (!ok) return false;
+  if (sbBusy) { showNotice('Opération en ligne en cours', 'Réessayez dans un instant. Rien n’a été modifié.'); return false; }
+  sbBusy = true;
+  try {
+    const kept = await idbSet('avantRestauration', { at: new Date().toISOString(), kind: 'redo', userState: JSON.parse(JSON.stringify(userState)), data: DATA });
+    if (!kept) { showNotice('Retour annulé', 'L’état actuel n’a pas pu être mis de côté. Par prudence, rien n’a été modifié.'); return false; }
+    await putState(s);
+    afterStateSwap();
+    toast('État d’avant rétabli');
+    render();
+    return true;
+  } catch (e) {
+    console.error(e);
+    showNotice('Erreur', 'Le retour n’a pas pu aboutir. Les copies sont toujours là : vous pouvez réessayer.');
+    return false;
+  } finally { sbBusy = false; }
 }
 
 //////////////////////// Modal ////////////////////////
@@ -5834,6 +6373,7 @@ route('custom', async (el) => {
   } catch {}
 
   applyTmdbOverrides();
+  try { repairSeenAddDup(); } catch (e) { console.warn('repairSeenAddDup', e); }
   const mergedDup = reconcileDuplicateMovies();
   if (mergedDup) setTimeout(() => toast(`${mergedDup} film(s) ajouté(s) à la main fusionné(s) avec votre historique`), 1500);
   updateSyncStatus();
