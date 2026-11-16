@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell, TMDB posters and TMDB API responses
    so the app loads instantly and works offline (posters stay cached across updates). */
-const VERSION = 'montvtime-v136';
+const VERSION = 'montvtime-v137';
 const SHELL = 'shell-' + VERSION;
 // Caches permanents : sans numéro de version, donc conservés à chaque mise à jour de l'app
 const IMG = 'img-v1';
@@ -12,7 +12,25 @@ const SHELL_ASSETS = [
   './',
   './index.html',
   './styles.css',
-  './app.js',
+  './js/01-constantes.js',
+  './js/02-etat.js',
+  './js/03-modele.js',
+  './js/04-tmdb.js',
+  './js/05-actions.js',
+  './js/06-routeur.js',
+  './js/07-affiches.js',
+  './js/08-series.js',
+  './js/09-films.js',
+  './js/10-bibliotheque.js',
+  './js/11-glissement.js',
+  './js/12-fiches-serie-episode.js',
+  './js/13-prochains-episodes.js',
+  './js/14-explorer.js',
+  './js/15-pages-compte.js',
+  './js/16-supabase.js',
+  './js/17-social.js',
+  './js/18-interface.js',
+  './js/19-demarrage.js',
   './data.js',
   './seed.js',
   './manifest.webmanifest',
