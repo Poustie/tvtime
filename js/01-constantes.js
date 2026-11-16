@@ -11,6 +11,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 68, date: '16 novembre 2026', title: 'En-tête qui reste en place', items: [
+    'En glissant d’une page à l’autre, tout le haut de la page reste en place (titre, nombre de films, « Réorganiser », « Arrêtées », tri…) : il se transforme en douceur en celui de la page suivante.',
+    'Titres « Explorer » et « Amis » sans symbole, comme « Séries » et « Films ». Explorer : « Par genre » retiré (le bouton Genres suffit).',
+  ] },
   { id: 67, date: '16 novembre 2026', title: 'Navigation plus fluide et tris plus simples', items: [
     'Barre du bas : le changement de page est instantané, sans animation ni pages qui se superposent.',
     'Glisser entre Séries, Films, Explorer et Amis : les deux pages restent collées, sans effet de zoom ; votre photo et la loupe restent en place et le titre se transforme en douceur.',

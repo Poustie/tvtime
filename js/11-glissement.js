@@ -121,23 +121,29 @@ function _anchorStart(s) {
   const keep = app.style.transform; app.style.transform = 'none'; // mesures sans le décalage du glissement
   const root = document.createElement('div'); root.className = 'sw-ov';
   const items = [];
-  const add = (src, role) => {
-    const r = src.getBoundingClientRect();
-    const c = src.cloneNode(true);
-    c.removeAttribute('id'); c.setAttribute('aria-hidden', 'true'); c.removeAttribute('href'); c.tabIndex = -1;
-    let css = `position:fixed;margin:0;right:auto;bottom:auto;left:${r.left}px;top:${r.top}px;`;
-    if (src.tagName === 'H1') {
-      const cs = getComputedStyle(src);
-      css += `font-size:${cs.fontSize};font-weight:${cs.fontWeight};font-family:${cs.fontFamily};line-height:${cs.lineHeight};letter-spacing:${cs.letterSpacing};color:${cs.color};white-space:nowrap;width:${r.width}px;`;
-    }
-    c.style.cssText = css;
-    root.appendChild(c);
-    items.push({ el: c, role });
+  const place = (c, r, extra) => {
+    c.removeAttribute('id'); c.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+    c.setAttribute('aria-hidden', 'true'); c.removeAttribute('href');
+    c.style.cssText = `position:fixed;margin:0;right:auto;bottom:auto;box-sizing:border-box;left:${r.left}px;top:${r.top}px;${extra || ''}`;
   };
-  add(tA, 'a'); add(tB, 'b');
-  const aA = hA.querySelector('.acct-btn'); if (aA) add(aA, 'both');
+  const aA = hA.querySelector('.acct-btn'), aB = hB.querySelector('.acct-btn');
   const sA = hA.querySelector('.search-btn'), sB = hB.querySelector('.search-btn');
-  if (sA && sB) add(sA, 'both'); else if (sA) add(sA, 'a'); else if (sB) add(sB, 'b');
+  const sharedAcct = !!(aA && aB), sharedSearch = !!(sA && sB);
+  // L'en-tête complet de chaque page (titre, sous-titre, boutons) : fondu enchaîné, sans glisser.
+  for (const [h, role] of [[hA, 'a'], [hB, 'b']]) {
+    const r = h.getBoundingClientRect();
+    const c = h.cloneNode(true);
+    place(c, r, `width:${r.width}px;`);
+    if (sharedAcct) c.querySelectorAll('.acct-btn').forEach(n => n.style.visibility = 'hidden');
+    if (sharedSearch) c.querySelectorAll('.search-btn').forEach(n => n.style.visibility = 'hidden');
+    root.appendChild(c); items.push({ el: c, role });
+  }
+  // Avatar et loupe présents sur les deux pages : une seule copie, immobile et toujours visible.
+  for (const src of [sharedAcct && aA, sharedSearch && sA]) {
+    if (!src) continue;
+    const c = src.cloneNode(true); place(c, src.getBoundingClientRect());
+    root.appendChild(c); items.push({ el: c, role: 'both' });
+  }
   app.style.transform = keep;
   document.body.appendChild(root);
   app.classList.add('sw-anchor'); pe.classList.add('sw-anchor');

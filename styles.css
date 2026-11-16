@@ -938,7 +938,7 @@ html, body { overflow-x: clip; }
 /* En-tête ancré pendant le glissement : l'avatar, la loupe et les titres sont des copies fixes ; les vrais sont masqués. */
 .sw-ov { position: fixed; inset: 0; z-index: 31; pointer-events: none; }
 .sw-ov > * { will-change: opacity; pointer-events: none; }
-.sw-anchor .page-head h1, .sw-anchor .page-head .acct-btn, .sw-anchor .page-head .search-btn { visibility: hidden; }
+.sw-anchor .page-head { visibility: hidden; }
 
 /* ===== Lot 8-B : fenêtres de tri / genres, onglets Bibliothèque (dev B uniquement) ===== */
 .pick-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }

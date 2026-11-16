@@ -412,7 +412,7 @@ function wireReviews(el, o) {
 }
 
 route('friends', async (el) => {
-  const head = `<div class="page-head"><h1>👥 Amis</h1>${acctBtn()}</div>`;
+  const head = `<div class="page-head"><h1>Amis</h1>${acctBtn()}</div>`;
   if (!sbSession) {
     el.innerHTML = `${head}<div class="empty"><div class="big">👥</div><p>Pour retrouver vos amis, connectez-vous d'abord (Mon compte).</p><a class="btn primary" href="#/profile">Me connecter</a></div>`;
     return;

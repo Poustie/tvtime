@@ -295,7 +295,7 @@ async function exploreRowHits(row) {
 }
 route('explore', async (el) => {
   el.innerHTML = `
-    <div class="page-head"><h1>🧭 Explorer</h1>${acctBtn()}<span class="sub">Rechercher de nouvelles séries et films à ajouter</span></div>
+    <div class="page-head"><h1>Explorer</h1>${acctBtn()}<span class="sub">Rechercher de nouvelles séries et films à ajouter</span></div>
     ${hasKey() ? `<div class="explore-search"><input class="input" id="expQ" placeholder="Rechercher une série ou un film…" autocomplete="off"></div>
     <div class="exp-genres" id="expGenres"></div>
     <div id="expResults" class="explore-results"></div>`
@@ -353,7 +353,7 @@ route('explore', async (el) => {
     try { list = await tmdbGenreList(kind); } catch {}
     if (kind !== exploreGenreKind) return;
     genreList = list;
-    genresEl.innerHTML = `<div class="genre-head"><span class="genre-title">🎭 Par genre</span>
+    genresEl.innerHTML = `<div class="genre-head">
       <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">📺 Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">🎬 Films</span>
       <span id="expGenreBtnBox"></span></div>
       <p class="genre-help">Choisissez plusieurs genres pour les combiner (ex. Action + Comédie).</p>`;
