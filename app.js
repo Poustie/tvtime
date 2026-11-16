@@ -11,6 +11,12 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 64, date: '16 novembre 2026', title: 'Profil réservé à vos amis', items: [
+    'Vos séries en cours, votre activité et vos favoris ne sont plus visibles que par vos amis (ceux que vous suivez et qui vous suivent). Votre pseudo et votre photo servent seulement à vous trouver : réglage « Me rendre trouvable par mon pseudo » dans Mon compte.',
+    'Vos dernières actions sont enregistrées tout de suite quand vous quittez l’app.',
+    'Réglages : la clé TMDB est masquée (bouton « Afficher »). Fiche d’un épisode vu : bouton « ✏️ Corriger » pour le nombre de visionnages.',
+    'Ajouter un film qui porte le même nom qu’un autre (ex. un remake) fonctionne : l’année les distingue.',
+  ] },
   { id: 63, date: '16 novembre 2026', title: 'Plus cohérent', items: [
     'Plus de doublons : une action visible sur la fiche n’est plus répétée dans « ⋯ Plus ». « Marquer une saison vue » disparaît : utilisez « Tout vu » sur chaque saison (correct aussi pour les animés redécoupés).',
     'Saisons : « Tout non vu » demande confirmation, « 🔁 Tout revu » quand la saison est déjà vue, et « Annuler » remet tout exactement (dates comprises). « Je l’ai revu » n’est possible qu’après avoir vu l’épisode.',
@@ -451,15 +457,23 @@ function scheduleSaveState() {
     if (typeof schedulePanes === 'function' && !_sw && !_swBusy) schedulePanes(1500);
   }
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    if (serverAvailable) {
-      fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(userState) }).catch(() => {});
-    } else {
-      idbSet('userState', userState);
-      try { localStorage.setItem('montvtime_userState', JSON.stringify(userState)); } catch {}
-    }
-  }, 400);
+  saveTimer = setTimeout(flushSaveState, 400);
 }
+// Écriture réelle de l'état (appelée après 0,4 s, ou tout de suite quand l'app passe en arrière-plan).
+function flushSaveState() {
+  clearTimeout(saveTimer); saveTimer = null;
+  if (serverAvailable) {
+    // keepalive est limité à 64 Ko par le navigateur (userdata.json ≈ 12 Mo) : seulement pour un petit état
+    const body = JSON.stringify(userState);
+    fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: body.length < 60000 }).catch(() => {});
+  } else {
+    idbSet('userState', userState);
+    try { localStorage.setItem('montvtime_userState', JSON.stringify(userState)); } catch {}
+  }
+}
+// App masquée / fermée : si une sauvegarde est en attente, on l'écrit tout de suite.
+document.addEventListener('visibilitychange', () => { if (document.hidden && saveTimer) flushSaveState(); });
+window.addEventListener('pagehide', () => { if (saveTimer) flushSaveState(); });
 function scheduleSaveCache() {
   clearTimeout(cacheTimer);
   cacheTimer = setTimeout(() => {
@@ -1826,11 +1840,21 @@ function removeCustomShow(key) {
 // Returns the name of the movie in the library (the existing one if it was already there).
 function addCustomMovie(hit) {
   if (!userState.customMovies) userState.customMovies = [];
-  const name = hit.title || hit.name || '';
+  let name = hit.title || hit.name || '';
   const all = (DATA.movies || []).concat(userState.customMovies);
   const idOf = (n) => { const r = (userState.movieTmdb && userState.movieTmdb[n]) || (tmdbCache.movies && tmdbCache.movies[n]); return r && r.id; };
-  const same = all.find(m => (hit.id != null && idOf(m.name) === hit.id) || _normName(m.name) === _normName(name));
+  const hitYear = +movieYear({ releaseDate: hit.release_date || '' }) || 0;
+  // Même id TMDB = même film ; même titre = même film sauf si l'id diffère ou si l'année s'écarte de plus d'un an (« Dune » 1984 / 2021).
+  const same = all.find(m => {
+    const id = idOf(m.name);
+    if (hit.id != null && id != null) return id === hit.id;
+    if (_normName(m.name) !== _normName(name)) return false;
+    const y = +movieYear(m) || 0;
+    return !(y && hitYear && Math.abs(y - hitYear) > 1);
+  });
   if (same) { toast(`Déjà dans votre bibliothèque : ${movieDisplayName(same)}`); return same.name; }
+  // Les films sont repérés par leur nom : un homonyme d'une autre année reçoit son année dans la clé.
+  if (all.some(m => m.name === name)) name = hitYear ? `${name} (${hitYear})` : `${name} (${hit.id})`;
   userState.customMovies.push({ name, releaseDate: hit.release_date || '', runtime: null, status: 'towatch', custom: true, addedAt: new Date().toISOString() });
   setMovieTmdb(name, hit); // stores poster + id
   scheduleSaveState();
@@ -2011,13 +2035,13 @@ function seriesCategory(s) {
   if (firstNew && daysSince(firstNew) <= newEpDays()) return 'watching';   // nouvel épisode non vu : 1 mois max (par défaut) après sa sortie
   return s.followed ? 'stale' : null;
 }
-// Date de sortie du premier épisode sorti APRÈS votre dernier visionnage (le plus ancien des nouveaux),
-// d'après les épisodes en cache ; à défaut, la date du dernier épisode sorti. null s'il n'y en a pas.
+// Date de sortie du dernier épisode sorti, s'il est postérieur à votre dernier visionnage (donc non vu). null sinon.
 function firstNewEpisodeAir(s, m) {
   if (!m || !m.lastAir) return null;
   const lastSeen = s.lastSeenAt ? String(s.lastSeenAt).slice(0, 10) : '';
   if (m.lastAir <= lastSeen) return null;
   const today = new Date().toISOString().slice(0, 10);
+  // Règle du propriétaire (30/10) : date de sortie du PREMIER épisode sorti après le dernier visionnage (saisons en cache, sinon lastAir).
   let first = null;
   for (const se of m.seasons || []) {
     const eps = se.n > 0 && tmdbCache.seasons[m.id + '|' + se.n];
@@ -3333,6 +3357,7 @@ route('episode', async (el, rest) => {
         <button class="btn ${seen ? 'primary' : ''}" id="epSeen">${seen ? '✓ Vu' : '✓ Je l’ai vu'}</button>
         <button class="btn" id="epRw" ${seen ? '' : 'disabled title="Marquez d’abord l’épisode comme vu"'}>🔁 Je l’ai revu${rw > 0 ? ` · Vu ${rw + 1} fois` : ''}</button>
         ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
+        ${seen ? '<button class="btn" id="epRwFix" title="Corriger le nombre de visionnages">✏️ Corriger</button>' : ''}
       </div>
       <div class="ep-react">
         <span class="react-label">Ma réaction</span>
@@ -3375,6 +3400,8 @@ route('episode', async (el, rest) => {
     render(); // affiche la nouvelle date de revisionnage
     toastUndo(`🔁 Vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); render(); });
   };
+  const epRwFix = el.querySelector('#epRwFix');
+  if (epRwFix) epRwFix.onclick = () => openRewatchStepper(`${displayName(sh)} · ${epTag(sh, season, n)}`, () => rewatchOf(sh, season, n), (c) => setRewatch(sh, season, n, c), render);
   const epRwMinus = el.querySelector('#epRwMinus');
   if (epRwMinus) epRwMinus.onclick = () => { setRewatch(sh, season, n, rewatchOf(sh, season, n) - 1); render(); toast('Un visionnage retiré'); };
   wireReactPicker(el.querySelector('.ep-react'), () => epScore(k), (v) => setEpScore(sh, season, n, v), () => sh.seenKeys.has(k));
@@ -5084,7 +5111,7 @@ route('settings', async (el) => {
     <div class="panel">
       <div class="settings-field">
         <label>Clé API TMDB</label>
-        <input class="input" id="tmdbKey" placeholder="Collez votre clé API TMDB (v3)" value="${esc(userState.tmdbKey)}">
+        <div style="display:flex;gap:8px"><input class="input" id="tmdbKey" type="password" autocomplete="off" placeholder="Collez votre clé API TMDB (v3)" value="${esc(userState.tmdbKey)}" style="flex:1;min-width:0"><button class="btn" id="tmdbKeyShow" type="button">Afficher</button></div>
         <div class="hint">Gratuit : créez un compte sur <b>themoviedb.org</b> → Paramètres → API → demandez une clé « Developer ». Copiez la <b>clé API (v3 auth)</b>. Elle permet d'afficher les affiches, la liste complète des épisodes, les dates de diffusion et « Prochains épisodes ».</div>
       </div>
       <div class="row" style="display:flex;gap:10px">
@@ -5131,6 +5158,10 @@ route('settings', async (el) => {
     </div>`;
 
   el.querySelector('#saveKey').onclick = () => { userState.tmdbKey = el.querySelector('#tmdbKey').value.trim(); scheduleSaveState(); updateSyncStatus(); toast('Clé enregistrée'); };
+  el.querySelector('#tmdbKeyShow').onclick = (ev) => {
+    const inp = el.querySelector('#tmdbKey'), show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password'; ev.currentTarget.textContent = show ? 'Masquer' : 'Afficher';
+  };
   el.querySelector('#testKey').onclick = async () => {
     const st = el.querySelector('#keyStatus'); st.textContent = 'Test…';
     const prevKey = userState.tmdbKey; // une clé invalide n'est pas gardée
@@ -5925,14 +5956,46 @@ function buildShareSnapshot() {
   return snap;
 }
 // Met à jour mon profil en ligne (résumé si public, sinon effacé). `extra` = autres champs à modifier.
+// Le résumé va dans « profile_snapshots » (lisible par soi et les amis mutuels) ; « profiles » ne garde que pseudo / photo.
+// Tant que cette table n'existe pas (SQL pas encore exécuté), repli : résumé écrit dans profiles.snapshot comme avant.
+let _sbSnapTable = null, _sbSnapMissAt = 0; // null = inconnu, true = présente, false = absente (retentée après 5 min)
+// Seulement les vraies erreurs « table inconnue » de Postgres / PostgREST (pas une 404 quelconque)
+const sbMissingTable = (e) => /42P01|PGRST205|Could not find the table|relation "?[\w.]*profile_snapshots"? does not exist/i.test(String(e && e.message));
+function markSnapTableMissing() { _sbSnapTable = false; _sbSnapMissAt = Date.now(); }
+const snapTableUsable = () => _sbSnapTable !== false || Date.now() - _sbSnapMissAt > 5 * 60000;
 async function sbPublishProfile(force, extra) {
   if (!sbSession || !sbProfile) return;
   if (!force && !extra && Date.now() - _sbPubAt < 3600000) return;
   _sbPubAt = Date.now();
   const isPublic = extra && extra.is_public !== undefined ? extra.is_public : sbProfile.is_public;
-  const body = Object.assign({}, extra, { snapshot: isPublic ? buildShareSnapshot() : null, updated_at: new Date().toISOString() });
+  const snap = isPublic ? buildShareSnapshot() : null;
+  const now = new Date().toISOString();
+  const body = Object.assign({}, extra, { updated_at: now });
+  let wrote = false, snapErr = null;
+  if (snapTableUsable()) {
+    try {
+      if (snap) await sbApi('profile_snapshots?on_conflict=user_id', { method: 'POST', json: { user_id: sbSession.uid, snapshot: snap, updated_at: now }, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } });
+      else await sbApi('profile_snapshots?user_id=eq.' + sbSession.uid, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+      _sbSnapTable = true; wrote = true;
+    } catch (e) { if (sbMissingTable(e)) markSnapTableMissing(); else snapErr = e; }
+  }
+  if (!wrote && !snapErr) body.snapshot = snap; // repli : ancienne table (avant l'exécution du SQL)
+  // Le profil (pseudo, photo, trouvable) est toujours enregistré, même si le résumé a échoué
   await sbApi('profiles?id=eq.' + sbSession.uid, { method: 'PATCH', json: body, headers: { Prefer: 'return=minimal' } });
-  Object.assign(sbProfile, extra || {}, { updated_at: body.updated_at });
+  Object.assign(sbProfile, extra || {}, { updated_at: now });
+  if (snapErr) throw snapErr;
+}
+// Complète des profils (liste d'amis ou fiche) avec leur résumé : table profile_snapshots, sinon profiles.snapshot.
+async function sbAttachSnapshots(profs) {
+  const ids = profs.map(p => p.id).filter(isUuid);
+  if (!ids.length || !snapTableUsable()) return profs;
+  try {
+    const rows = (await sbApi('profile_snapshots?select=user_id,snapshot,updated_at&user_id=in.(' + ids.join(',') + ')')) || [];
+    _sbSnapTable = true;
+    const by = new Map(rows.map(r => [r.user_id, r]));
+    for (const p of profs) { const r = by.get(p.id); if (r && r.snapshot) { p.snapshot = r.snapshot; p.updated_at = r.updated_at || p.updated_at; } }
+  } catch (e) { if (sbMissingTable(e)) markSnapTableMissing(); }
+  return profs; // sans ligne dans la nouvelle table : on garde profiles.snapshot (repli)
 }
 // En arrière-plan (ouverture de l'app) : republie le résumé au plus une fois par heure.
 async function sbMaybePublish() {
@@ -5976,6 +6039,7 @@ async function sbLoadFriends() {
   const inc = new Set(rows.filter(r => r.followed === me).map(r => r.follower).filter(isUuid));
   const ids = Array.from(new Set([...out, ...inc]));
   const profs = ids.length ? ((await sbApi('profiles?id=in.(' + ids.join(',') + ')&select=id,pseudo,avatar,snapshot,updated_at')) || []) : [];
+  await sbAttachSnapshots(profs);
   const res = { friends: [], incoming: [], outgoing: [] };
   for (const p of profs) {
     if (out.has(p.id) && inc.has(p.id)) res.friends.push(p);
@@ -6071,9 +6135,10 @@ async function fillAccountProfile(box) {
   box.innerHTML = `<div class="panel"><h3>Mon profil</h3>
       <div style="display:flex;align-items:center;gap:14px">
         <label style="cursor:pointer">${avatarHtml(sbProfile.avatar, sbProfile.pseudo, 'lg')}<input type="file" id="frAvatar" accept="image/*" hidden><span class="sub" style="display:block;text-align:center;font-size:11px">Changer la photo</span></label>
-        <div><b style="font-size:18px">${esc(sbProfile.pseudo)}</b><div class="hint" style="color:var(--muted)">${pub ? '🟢 Visible par ceux qui vous suivent' : '🔒 Invisible'}</div></div>
+        <div><b style="font-size:18px">${esc(sbProfile.pseudo)}</b><div class="hint" style="color:var(--muted)">${pub ? '🟢 Trouvable par pseudo' : '🔒 Introuvable'}</div></div>
       </div>
-      <label class="check-row" style="display:flex;gap:10px;margin-top:12px;cursor:pointer"><input type="checkbox" id="frPublic" ${pub ? 'checked' : ''}><span>Rendre mon profil visible (les autres me trouvent avec mon pseudo)</span></label>
+      <label class="check-row" style="display:flex;gap:10px;margin-top:12px;cursor:pointer"><input type="checkbox" id="frPublic" ${pub ? 'checked' : ''}><span>Me rendre trouvable par mon pseudo</span></label>
+      <p class="hint" style="color:var(--muted);margin:6px 0 0 26px">Votre pseudo et votre photo permettent à vos amis de vous trouver ; vos séries et votre activité ne sont visibles que par vos amis.</p>
       ${pub ? `<div style="margin-left:26px">
         <label class="check-row"><input type="checkbox" data-share="watching" ${shareOpt('watching') ? 'checked' : ''}> Mes séries en cours</label>
         <label class="check-row"><input type="checkbox" data-share="recent" ${shareOpt('recent') ? 'checked' : ''}> Mon activité récente</label>
@@ -6239,7 +6304,7 @@ route('friends', async (el) => {
   const lastOf = (f) => { const g = f.snapshot && f.snapshot.recent && f.snapshot.recent[0]; return g ? `${activityText(g)} · ${fmtAgo(g.at)}` : (f.snapshot ? 'Rien de partagé pour l\'instant' : 'Profil pas encore publié'); };
   const person = (f, actions, sub) => `<div class="friend-row">${avatarHtml(f.avatar, f.pseudo)}<span style="flex:1"><b>${esc(f.pseudo)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${actions}</div>`;
   el.innerHTML = `${head}
-    ${sbProfile.is_public ? '' : `<div class="panel"><p class="hint" style="color:var(--muted);margin:0">🔒 Votre profil est invisible : on ne peut pas vous trouver avec votre pseudo. <a href="#/profile">Le rendre visible</a></p></div>`}
+    ${sbProfile.is_public ? '' : `<div class="panel"><p class="hint" style="color:var(--muted);margin:0">🔒 Vous êtes introuvable : vos amis ne peuvent pas vous trouver avec votre pseudo. <a href="#/profile">Me rendre trouvable</a></p></div>`}
     ${incoming.length ? `<div class="panel fr-requests"><h3>📩 Demandes d'ami <span style="color:var(--muted);font-weight:400">· ${incoming.length}</span></h3>
       ${incoming.map(f => person(f, `<button class="btn sm primary" data-accept="${esc(f.id)}">Accepter</button><button class="btn sm ghost" data-refuse="${esc(f.id)}">Refuser</button>`, 'veut être votre ami(e)')).join('')}</div>` : ''}
     <div class="panel"><h3>Ajouter un ami</h3>
@@ -6276,7 +6341,7 @@ route('friend', async (el, rest) => {
   if (!sbSession || !/^[0-9a-f-]{36}$/.test(id)) { el.innerHTML = `${back}<div class="empty">Profil introuvable.</div>`; return; }
   el.innerHTML = `${back}<p class="hint" style="color:var(--muted)">Chargement…</p>`;
   let p;
-  try { const rows = await sbApi('profiles?id=eq.' + id + '&select=id,pseudo,avatar,snapshot,updated_at'); p = rows && rows[0]; }
+  try { const rows = await sbApi('profiles?id=eq.' + id + '&select=id,pseudo,avatar,snapshot,updated_at'); p = rows && rows[0]; if (p) await sbAttachSnapshots([p]); }
   catch (e) { el.innerHTML = `${back}<div class="empty"><p>Impossible de charger (${esc(e.message || 'hors-ligne')}).</p></div>`; return; }
   if (!p) { el.innerHTML = `${back}<div class="empty">Ce profil n'est plus visible.</div>`; return; }
   const s = p.snapshot || {};
