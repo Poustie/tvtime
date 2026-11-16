@@ -11,6 +11,13 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 62, date: '16 novembre 2026', title: 'Prochains épisodes et app plus simple', items: [
+    '« Prochains épisodes » (l’ancien « À suivre ») ne montre plus que vos séries commencées, rangées en « Nouveaux épisodes », « À reprendre », « Bientôt » (avec la date : « jeudi », « dans 3 jours ») et « En pause » (replié). Le prochain épisode est celui qui suit votre dernier épisode vu.',
+    'Sur la fiche d’une série en cours : « Prochain épisode : 3×06 · jeudi 20 nov. ». Les nouveaux épisodes des saisons en cours apparaissent maintenant (mise à jour chaque jour), et une coupure réseau ne rend plus une série « introuvable ».',
+    'Les affiches restent disponibles sans connexion.',
+    'Fiches plus simples : 3 boutons et « ⋯ Plus ». Un bouton « ⋯ » sur chaque affiche remplace l’appui long caché. Des mots plus clairs : « Mes séries », « Épingler », « Arrêter la série », « Je l’ai vu », « Je l’ai revu ».',
+    'Boutons plus faciles à toucher, zoom autorisé, textes jamais trop petits, et une loupe 🔍 pour chercher dans Séries et Films. Dans la liste des épisodes, touchez la petite réaction pour la choisir.',
+  ] },
   { id: 61, date: '16 novembre 2026', title: 'Vos données mieux protégées', items: [
     'Sauvegarde en ligne : elle ne peut plus être remplacée par une version moins complète (par exemple depuis un téléphone neuf). L’app garde aussi la version précédente et vous prévient s’il y a une différence (« Restaurer » ou « Remplacer quand même »).',
     'L’état de la sauvegarde est visible en haut de Mon compte (« ☁️ Sauvegardé en ligne aujourd’hui à … »). Le rappel de sauvegarde est plus clair, et les profils qui ne suivent que des films sont maintenant protégés eux aussi.',
@@ -717,25 +724,107 @@ async function tmdbFetch(path, lang = 'fr-FR') {
 async function resolveTmdbId(tvdbId) {
   if (!tvdbId) return null;
   if (tvdbId in tmdbCache.map) return tmdbCache.map[tvdbId];
+  // « Introuvable » (null) n'est mémorisé que si TMDB a répondu SANS résultat : jamais sur une erreur
+  // réseau / HTTP (clé invalide, 429, 5xx, hors-ligne), qui sera simplement retentée plus tard.
+  const t = _resolveFailAt.get(tvdbId);
+  if (t && Date.now() - t < 60000) return null; // erreur récente : on ne martèle pas TMDB
   try {
     const res = await tmdbFetch(`/find/${tvdbId}?external_source=tvdb_id`);
     const hit = (res.tv_results && res.tv_results[0]) || null;
     tmdbCache.map[tvdbId] = hit ? hit.id : null;
-  } catch { tmdbCache.map[tvdbId] = null; }
+    _resolveFailAt.delete(tvdbId);
+  } catch { _resolveFailAt.set(tvdbId, Date.now()); return null; }
   scheduleSaveCache();
   return tmdbCache.map[tvdbId];
 }
+const _resolveFailAt = new Map(); // tvdbId -> date de la dernière erreur de résolution (mémoire seulement)
 
-async function getSeasonEpisodes(tmdbId, seasonNumber) {
+// Listes d'épisodes d'une saison. Copie en cache réutilisée sauf si elle est périmée (voir seasonStale) ;
+// tmdbCache.seasonsAt[clé] = date du téléchargement. Une liste vide n'est JAMAIS mémorisée. Hors-ligne / erreur : copie en cache.
+// force = re-télécharger maintenant (bouton « Actualiser » de Prochains épisodes).
+let _seasonVer = 0;                // +1 quand une liste change (invalide les calculs mémorisés)
+const _seasonTry = new Map();      // clé -> { at, ok } dernier essai de téléchargement (mémoire) : pas plus d'un essai / 10 min
+const SEASON_TTL = 24 * 3600 * 1000;        // saison en cours de diffusion : copie valable 24 h
+function isRunningMeta(meta) { return !!meta && (meta.status === 'Returning Series' || meta.status === 'In Production' || !!meta.nextAir); }
+// Saison « utile » d'une série en cours : la dernière, ou celle de l'épisode diffusé en dernier.
+function isLiveSeason(meta, sn) {
+  if (!isRunningMeta(meta)) return false;
+  const nums = (meta.seasons || []).map(s => s.n).filter(n => n > 0);
+  return sn === Math.max(0, ...nums) || !!(meta.lastEp && meta.lastEp.s === sn);
+}
+function seasonStale(tmdbId, sn, cached) {
+  const meta = tmdbCache.shows[tmdbId];
+  if (!meta) return false;
+  const se = (meta.seasons || []).find(s => s.n === sn);
+  if (se && se.count > cached.length) return true;                                                // TMDB annonce plus d'épisodes
+  if (meta.lastEp && meta.lastEp.s === sn && cached.every(e => e.n < meta.lastEp.n)) return true; // dernier épisode diffusé absent
+  const at = (tmdbCache.seasonsAt || {})[tmdbId + '|' + sn] || 0;
+  if (isLiveSeason(meta, sn) && Date.now() - at > SEASON_TTL) return true;                        // saison en cours : copie > 24 h
+  return false;
+}
+const _seasonFlight = new Map(); // clé -> téléchargement en cours, partagé par les appelants simultanés
+let _seasonResetT = null;
+// Une liste de saison a changé de numérotation / taille : on reconstruit le modèle (volets pré-rendus mis à jour), une seule fois.
+function seasonsRenumbered() {
+  _seasonVer++; _dataVer++;
+  if (typeof _splitMaps !== 'undefined') _splitMaps.clear();
+  clearTimeout(_seasonResetT);
+  _seasonResetT = setTimeout(() => { MODEL = null; try { buildModel(); } catch {} }, 400);
+}
+// Y a-t-il des épisodes vus / réactions / revisionnages de cette saison, pour une série liée à cet id TMDB ?
+function seasonHasUserData(tmdbId, sn) {
+  buildModel();
+  for (const sh of MODEL.shows.values()) {
+    if (String(showTmdbIdOf(sh)) !== String(tmdbId)) continue;
+    const pre = sh.key + '|' + sn + '|';
+    for (const k of sh.seenKeys) if (k.startsWith(pre)) return true;
+    for (const mp of [MODEL.emotionMap, MODEL.ratingMap, MODEL.rewatchMap]) for (const [k, v] of mp) if (v && k.startsWith(pre)) return true;
+  }
+  return false;
+}
+async function getSeasonEpisodes(tmdbId, seasonNumber, force) {
   const ck = tmdbId + '|' + seasonNumber;
-  if (tmdbCache.seasons[ck]) return tmdbCache.seasons[ck];
-  const d = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}`);
-  const eps = (d.episodes || []).map(e => ({
-    n: e.episode_number, name: e.name, air: e.air_date,
-    runtime: e.runtime, still: e.still_path, overview: e.overview,
-  }));
-  tmdbCache.seasons[ck] = eps; scheduleSaveCache();
-  return eps;
+  const cached = tmdbCache.seasons[ck];
+  const have = !!(cached && cached.length);
+  if (!force && have && !seasonStale(tmdbId, seasonNumber, cached)) return cached;
+  const flying = _seasonFlight.get(ck);
+  if (flying) return flying; // même téléchargement pour tous les appelants simultanés
+  const tried = _seasonTry.get(ck);
+  if (!force && tried && Date.now() - tried.at < 600000) {
+    if (cached) return cached;
+    if (!tried.ok) throw new Error('TMDB : saison indisponible (essai récent échoué)'); // pas de [] trompeur
+    return []; // TMDB a répondu : saison sans épisodes connus
+  }
+  const p = (async () => {
+    let d;
+    try { d = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}`); }
+    catch (e) { _seasonTry.set(ck, { at: Date.now(), ok: false }); if (cached) return cached; throw e; }
+    _seasonTry.set(ck, { at: Date.now(), ok: true });
+    const eps = (d.episodes || []).map(e => ({
+      n: e.episode_number, name: e.name, air: e.air_date,
+      runtime: e.runtime, still: e.still_path, overview: e.overview,
+    }));
+    if (!eps.length) return cached || []; // liste vide : pas mémorisée (saison à venir sans épisodes connus), retentée plus tard
+    if (!tmdbCache.seasonsAt) tmdbCache.seasonsAt = {};
+    const sameNums = have && cached.length === eps.length && cached.every((e, i) => e.n === eps[i].n);
+    if (have && !sameNums) {
+      // Nouvelle liste raccourcie / renumérotée : acceptée seulement si elle contient tous les anciens numéros,
+      // ou si rien de vu / noté / revu dans cette saison ; sinon on garde l'ancienne copie.
+      const superset = cached.every(e => eps.some(x => x.n === e.n));
+      if (!superset && seasonHasUserData(tmdbId, seasonNumber)) {
+        console.warn(`Saison ${ck} : nouvelle liste TMDB (${eps.length} ép.) ignorée, l'ancienne (${cached.length} ép.) contient des épisodes vus / notés`);
+        tmdbCache.seasonsAt[ck] = Date.now(); scheduleSaveCache();
+        return cached;
+      }
+    }
+    const airChanged = have && !sameNums ? false : (have && cached.some((e, i) => e.air !== eps[i].air));
+    tmdbCache.seasons[ck] = eps; tmdbCache.seasonsAt[ck] = Date.now(); scheduleSaveCache();
+    if (have && !sameNums) seasonsRenumbered();
+    else if (!have || airChanged) { _seasonVer++; if (typeof _splitMaps !== 'undefined') _splitMaps.clear(); }
+    return eps;
+  })();
+  _seasonFlight.set(ck, p);
+  try { return await p; } finally { _seasonFlight.delete(ck); }
 }
 
 // Full detail for one episode (synopsis, air date, runtime, public rating, guests).
@@ -809,7 +898,7 @@ function pickTrailer(videos) {
   return best ? best.key : null;
 }
 async function trailerFallback(kind, id) {
-  try { return pickTrailer(await tmdbFetch(`/${kind}/${id}/videos?language=en-US`)); }
+  try { return pickTrailer(await tmdbFetch(`/${kind}/${id}/videos`, 'en-US')); }
   catch { return null; }
 }
 function extractProviders(wp) {
@@ -1102,7 +1191,7 @@ function repairSeenAddDup() {
 function computeSeenCount() {
   let c = 0; for (const sh of MODEL.shows.values()) c += sh.seenKeys.size; return c;
 }
-const epScore = (k) => reactScore(MODEL.emotionMap.get(k), MODEL.ratingMap.get(k));
+const epScore = (k) => { if (!MODEL) buildModel(); return reactScore(MODEL.emotionMap.get(k), MODEL.ratingMap.get(k)); };
 function setEpScore(sh, season, number, v) {
   const k = epKey(sh.key, season, number), r = reactOfScore(v);
   if (r) { MODEL.emotionMap.set(k, r.id); MODEL.ratingMap.set(k, v); userState.emotions[k] = r.id; userState.ratings[k] = v; }
@@ -1393,7 +1482,7 @@ document.addEventListener('click', (ev) => {
   const c = ev.target.closest && ev.target.closest('.cast-item[data-pname]');
   if (c) openPerson(c.dataset.pid, c.dataset.pname);
 });
-const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'À suivre', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Mon compte', friends: 'Amis', settings: 'Réglages', custom: 'Personnalisation', changelog: 'Notes de version', episode: 'Épisode', preview: 'Aperçu' };
+const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'Prochains épisodes', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Mon compte', friends: 'Amis', settings: 'Réglages', custom: 'Personnalisation', changelog: 'Notes de version', episode: 'Épisode', preview: 'Aperçu' };
 // Label of the page « ← Retour » leads to (fallback = page used when there is no history).
 function backLabel(fallback) {
   const prev = navStack.length > 1 ? navStack[navStack.length - 2] : fallback;
@@ -1406,7 +1495,7 @@ function backLabel(fallback) {
   return BACK_LABELS[name] || 'Retour';
 }
 function backBtn(fallback) {
-  return `<a class="btn ghost sm" href="${esc(fallback)}" data-back="${esc(fallback)}">← ${esc(backLabel(fallback))}</a>`;
+  return `<a class="btn ghost sm back-btn" href="${esc(fallback)}" data-back="${esc(fallback)}">← ${esc(backLabel(fallback))}</a>`;
 }
 
 // Basic slide transition when moving from one main category to another.
@@ -1659,8 +1748,9 @@ function openAddCatalog(kind) {
     onPick: async (hit) => {
       closeModal();
       if (kind !== 'tv') { openMovie(addCustomMovie(hit)); return; }
+      const exist = ownedLookup()(Object.assign({}, hit, { media_type: 'tv' })); // déjà dans la bibliothèque : on ouvre sa fiche
       addCustomShow(hit);
-      location.hash = '#/home';
+      location.hash = exist ? '#/show/' + encodeURIComponent(exist) : '#/home';
       render();
     },
   });
@@ -1668,12 +1758,15 @@ function openAddCatalog(kind) {
 
 function addCustomShow(hit) {
   if (!userState.customShows) userState.customShows = [];
-  if (userState.customShows.some(c => c.tmdbId === hit.id)) { toast('Série déjà ajoutée'); return; }
+  const own = ownedLookup()(Object.assign({}, hit, { media_type: 'tv' })); // déjà dans la bibliothèque (id TMDB ou même titre)
+  if (own) { toast('Déjà dans votre bibliothèque : ' + displayName(MODEL.shows.get(own) || { name: hit.name || '' })); return own; }
+  if (userState.customShows.some(c => c.tmdbId === hit.id)) { toast('Série déjà ajoutée'); return 'tmdb:' + hit.id; }
   const cs = { key: 'tmdb:' + hit.id, tmdbId: hit.id, name: hit.name || hit.title || '', poster: hit.poster_path || null, addedAt: new Date().toISOString() };
   userState.customShows.push(cs);
   scheduleSaveState();
   getShowMeta(hit.id, true).catch(() => {}); // prefetch meta (poster, seasons, episodes)
   toast('Série ajoutée à « Pas commencée »');
+  return cs.key;
 }
 function removeCustomShow(key) {
   if (!userState.customShows) return;
@@ -1712,7 +1805,7 @@ function openUnifiedSearch(kind) {
   const ownedMovies = (DATA.movies || []).concat(userState.customMovies || []);
   showModal(`
     <h2>${kind === 'tv' ? '🔍 Rechercher une série' : '🔍 Rechercher un film'}</h2>
-    <p class="hint" style="color:var(--muted)">Retrouvez une œuvre déjà dans votre bibliothèque ou ajoutez-en une nouvelle.</p>
+    <p class="hint" style="color:var(--muted)">Retrouvez ${kind === 'tv' ? 'une série' : 'un film'} de votre bibliothèque ou ajoutez-en ${kind === 'tv' ? 'une nouvelle (elle ira dans « Pas commencée »)' : 'un nouveau (il ira dans « À voir »)'}.</p>
     <div class="modal-fields" style="flex-direction:row;gap:8px">
       <input class="input" id="uQ" style="flex:1" placeholder="Titre à rechercher…">
       <button class="btn primary" id="uGo">Rechercher</button>
@@ -1723,12 +1816,12 @@ function openUnifiedSearch(kind) {
     const q = root.querySelector('#uQ');
     const results = root.querySelector('#uResults');
 
-    const hitCard = (img, name, date, attrs) => {
+    const hitCard = (img, name, date, attrs, own) => {
       const t = esc(name);
       const im = img ? `<img loading="lazy" src="${IMG(img, 'w185')}" alt="">` : `<div class="fallback-title">${t}</div>`;
       return `<button class="ps-hit" ${attrs}>
         <div class="ps-poster">${im}</div>
-        <div class="ps-name">${t}${date ? ` <span>(${date})</span>` : ''}</div>
+        <div class="ps-name">${t}${date ? ` <span>(${date})</span>` : ''}${own ? '<small class="ps-own">✓ Dans ma bibliothèque</small>' : ''}</div>
       </button>`;
     };
 
@@ -1748,7 +1841,8 @@ function openUnifiedSearch(kind) {
         html += locals.map(it => {
           if (kind === 'tv') {
             const poster = (metaFor(it) || {}).poster || null;
-            return hitCard(poster, displayName(it), '', `data-local-key="${esc(it.key)}"`);
+            const m0 = metaFor(it) || {};
+            return hitCard(poster, displayName(it), (m0.firstAir || '').slice(0, 4), `data-local-key="${esc(it.key)}"`);
           }
           const rec = (tmdbCache.movies || {})[it.name];
           return hitCard(rec && rec.poster, movieDisplayName(it), movieYear(it), `data-local-movie="${esc(it.name)}"`);
@@ -1760,10 +1854,7 @@ function openUnifiedSearch(kind) {
       results.innerHTML = html;
 
       results.querySelectorAll('[data-local-key]').forEach(b => b.onclick = () => { closeModal(); openShow(b.getAttribute('data-local-key')); });
-      results.querySelectorAll('[data-local-movie]').forEach(b => b.onclick = () => {
-        closeModal(); libFilter.kind = 'movie'; libFilter.q = b.getAttribute('data-local-movie');
-        location.hash = '#/library'; render();
-      });
+      results.querySelectorAll('[data-local-movie]').forEach(b => b.onclick = () => { closeModal(); openMovie(b.getAttribute('data-local-movie')); });
 
       if (!includeTmdb) return;
       try {
@@ -1773,13 +1864,18 @@ function openUnifiedSearch(kind) {
         const box = results.querySelector('#uTmdb');
         if (!box) return;
         if (!hits.length) { box.innerHTML = `<div class="empty">Aucun résultat.</div>`; return; }
+        const own = ownedLookup();
         box.innerHTML = `<div class="ps-grid">` + hits.map((h, i) =>
-          hitCard(h.poster_path, h.name || h.title || '', (h.first_air_date || h.release_date || '').slice(0, 4), `data-add="${i}"`)
+          hitCard(h.poster_path, h.name || h.title || '', (h.first_air_date || h.release_date || '').slice(0, 4), `data-add="${i}"`, own(Object.assign({}, h, { media_type: kind })))
         ).join('') + `</div>`;
         box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
           const h = hits[parseInt(b.getAttribute('data-add'), 10)];
           closeModal();
-          if (kind === 'tv') { addCustomShow(h); location.hash = '#/home'; render(); return; }
+          if (kind === 'tv') {
+            const exist = ownedLookup()(Object.assign({}, h, { media_type: 'tv' })); // déjà dans la bibliothèque : sa fiche, pas de doublon
+            addCustomShow(h);
+            location.hash = exist ? '#/show/' + encodeURIComponent(exist) : '#/home'; render(); return;
+          }
           openMovie(addCustomMovie(h));
         });
       } catch { const box = results.querySelector('#uTmdb'); if (box) box.innerHTML = `<div class="empty">Erreur de recherche.</div>`; }
@@ -1819,17 +1915,18 @@ route('home', async (el) => {
   const shows = Array.from(MODEL.shows.values());
   const archivedCount = shows.filter(s => s.archived).length;
   el.innerHTML = `
-    <div class="page-head"><h1>Séries</h1>${acctBtn()}
+    <div class="page-head"><h1>Séries</h1>${searchBtn('tv')}${acctBtn()}
       <div class="spacer"></div>
       ${seriesTab === 'avoir' ? `<button class="btn sm ghost ${homeEditOrder ? 'primary' : ''}" id="btnReorder">${homeEditOrder ? '✓ Terminé' : '↕ Réorganiser'}</button>
       ${archivedCount ? `<button class="btn ghost sm" id="btnArchived">⏹ Arrêtées (${archivedCount})</button>` : ''}` : ''}
     </div>
     <div class="pill-tabs" id="seriesTabs">
-      <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">📺 À voir</span>
-      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">🔜 À suivre</span>
+      <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">📺 Mes séries</span>
+      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">🔜 Prochains épisodes</span>
     </div>
     <div id="seriesBody"></div>`;
 
+  wireSearchBtn(el);
   el.querySelectorAll('#seriesTabs .chip').forEach(c => c.onclick = () => { seriesTab = c.dataset.stab; render(); });
   const bArch = el.querySelector('#btnArchived');
   if (bArch) bArch.onclick = () => { libFilter.kind = 'series'; libFilter.tab = 'archived'; location.hash = '#/library'; };
@@ -1930,7 +2027,6 @@ async function renderSeriesAvoir(el, shows) {
       });
     }
     grid.querySelectorAll('.show-card').forEach(c => c.onclick = () => openShow(c.dataset.key));
-    wireCardArchive(grid);
     hydratePosters(grid, list);
   };
   for (const secId of order) fill(defs[secId].id, defs[secId].list, defs[secId].withAgo);
@@ -2085,17 +2181,18 @@ route('movies', async (el) => {
 
   el.innerHTML = `
     <div class="page-head">
-      <h1>Films</h1>${acctBtn()}
+      <h1>Films</h1>${searchBtn('movie')}${acctBtn()}
       <span class="sub">${toWatch.length} à voir · ${watched.length} vus</span>
       <div class="spacer"></div>
       <div class="sort-chips" id="movSort"></div>
     </div>
     <div class="pill-tabs" id="movTabs">
       <span class="chip ${moviesTab === 'towatch' ? 'active' : ''}" data-mtab="towatch">🎬 À voir (${toWatch.length})</span>
-      <span class="chip ${moviesTab === 'watched' ? 'active' : ''}" data-mtab="watched">✓ Déjà vus (${watched.length})</span>
+      <span class="chip ${moviesTab === 'watched' ? 'active' : ''}" data-mtab="watched">✓ Vus (${watched.length})</span>
     </div>
     <div class="grid" id="movGrid"></div>`;
 
+  wireSearchBtn(el);
   const movSort = el.querySelector('#movSort');
   movSort.innerHTML = sortChipsHtml(moviesSort);
   movSort.querySelectorAll('.chip').forEach(c => c.onclick = () => { moviesSort = nextSort(moviesSort, c.dataset.sort); render(); });
@@ -2145,18 +2242,16 @@ route('movie', async (el, rest) => {
           <div class="sub">${subBits}${meta && meta.vote ? (subBits ? ' · ' : '') + '⭐ ' + meta.vote.toFixed(1) : ''}</div>
           ${meta && meta.tagline ? `<div class="sub" style="font-style:italic;margin-top:4px">${esc(meta.tagline)}</div>` : ''}
           <div class="tags">
-            <span class="chip">${st === 'watched' ? '✓ Vu' : '🎬 À voir'}</span>
-            ${st === 'watched' && rw > 0 ? `<span class="chip">🔁 ${rw + 1} visionnages</span>` : ''}
+            <span class="chip">${st === 'watched' ? (movieWatchedOf(m) ? '✓ Vu le ' + esc(fmtFull(movieWatchedOf(m))) : '✓ Vu') : '🎬 À voir'}</span>
+            ${st === 'watched' && rw > 0 ? `<span class="chip">🔁 Vu ${rw + 1} fois</span>` : ''}
           </div>
           ${st !== 'watched' && meta && meta.id ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
           <div class="detail-actions">
-            <button class="btn ${st === 'watched' ? 'primary' : ''}" id="mToggle">${st === 'watched' ? '↩ Remettre « à voir »' : '✓ Marquer comme vu'}</button>
-            ${st === 'watched' ? `<button class="btn" id="mRw">🔁 +1 visionnage${rw > 0 ? ' (×' + (rw + 1) + ')' : ''}</button>` : ''}
-            ${st === 'watched' && rw > 0 ? `<button class="btn" id="mRwMinus" title="Retirer un visionnage">−1</button>` : ''}
-            <button class="btn ${isFavMovie(m) ? 'primary' : ''}" id="mFav">${isFavMovie(m) ? '❤️ Favori' : '🤍 Favori'}</button>
-            <button class="btn" id="mAddList">📃 Ajouter à une liste</button>
-            <button class="btn" id="mFind">🔍 Chercher une affiche</button>
-            ${isCustomMovie(m) ? `<button class="btn danger" id="mDel">🗑 Retirer</button>` : ''}
+            ${st === 'watched'
+              ? `<button class="btn" id="mRw">🔁 Je l’ai revu</button>${rw > 0 ? `<button class="btn" id="mRwMinus" title="Retirer un visionnage" aria-label="Retirer un visionnage">−1</button>` : ''}`
+              : '<button class="btn primary" id="mToggle">✓ Je l’ai vu</button>'}
+            <button class="btn ${isFavMovie(m) ? 'on' : ''}" id="mFav">${isFavMovie(m) ? '❤️ Dans mes favoris' : '♡ Ajouter aux favoris'}</button>
+            <button class="btn" id="mMore" aria-label="Plus d’actions">⋯ Plus</button>
           </div>
           ${st !== 'watched' ? `<div class="movie-progress" id="mProgBox">
             <span class="react-label">⏱️ Reprise — j'en suis à</span>
@@ -2190,9 +2285,10 @@ route('movie', async (el, rest) => {
   wireTrailer(el);
   fillRelated(el, 'movie', (meta && meta.id) || (mRec && mRec.id));
   renderAppreciation(el.querySelector('#apprSlot'), 'movie', meta && meta.id, meta);
-  el.querySelector('#mToggle').onclick = () => { setMovieStatus(m.name, st === 'watched' ? 'towatch' : 'watched'); toast(st === 'watched' ? 'Remis dans « à voir »' : 'Marqué comme vu'); render(); };
+  const mTog = el.querySelector('#mToggle');
+  if (mTog) mTog.onclick = () => { setMovieStatus(m.name, 'watched'); toast('Film marqué comme vu'); render(); };
   el.querySelector('#mFav').onclick = () => { toggleFavMovie(m); toast(isFavMovie(m) ? 'Ajouté aux favoris' : 'Retiré des favoris'); render(); };
-  el.querySelector('#mAddList').onclick = () => openAddToListModal('movie', m);
+  el.querySelector('#mMore').onclick = () => openMovieActions(m);
   const rwBtn = el.querySelector('#mRw');
   if (rwBtn) rwBtn.onclick = () => {
     const prev = movieRewatchOf(m);
@@ -2201,8 +2297,6 @@ route('movie', async (el, rest) => {
   };
   const rwMinus = el.querySelector('#mRwMinus');
   if (rwMinus) rwMinus.onclick = () => { setMovieRewatch(m.name, movieRewatchOf(m) - 1); render(); toast('Un visionnage retiré'); };
-  el.querySelector('#mFind').onclick = () => openPosterSearch('movie', { name: m.name });
-  const del = el.querySelector('#mDel'); if (del) del.onclick = () => { removeCustomMovie(m.name); toast('Film retiré'); location.hash = '#/movies'; render(); };
   const progSave = el.querySelector('#mProgSave');
   if (progSave) progSave.onclick = () => {
     const h = parseInt(el.querySelector('#mProgH').value, 10) || 0;
@@ -2218,26 +2312,16 @@ function movieCardHtml(m) {
   const year = movieYear(m);
   const rt = m.runtime ? `${Math.floor(m.runtime / 60)}h${String(m.runtime % 60).padStart(2, '0')}` : '';
   const metaBits = [year, rt].filter(Boolean).join(' · ');
-  const btn = st === 'watched'
-    ? `<button class="card-arch" data-movie="${esc(m.name)}" data-to="towatch" title="Remettre dans « à voir »">↩</button>`
-    : `<button class="card-arch" data-movie="${esc(m.name)}" data-to="watched" title="Marquer comme vu">✓</button>`;
   const rating = movieScore(m) ? `<span class="badge-tag" title="Ma réaction">${reactBadge(movieScore(m))}</span>` : '';
   const rw = movieRewatchOf(m);
   const rwBadge = (st === 'watched' && rw > 0) ? `<span class="badge-count">×${rw + 1}</span>` : '';
-  const rwBtn = st === 'watched'
-    ? `<button class="card-rw ${rw > 0 ? 'on' : ''}" data-mrw="${esc(m.name)}" title="Visionnages — appui : +1 · appui long : corriger">🔁${rw > 0 ? '×' + (rw + 1) : ''}</button>`
-    : '';
-  const delBtn = isCustomMovie(m) ? `<button class="card-del" data-mdel="${esc(m.name)}" title="Retirer ce film ajouté">🗑</button>` : '';
   const prog = movieCardProgress(m);
   return `<div class="show-card movie-card" data-mname="${esc(m.name)}">
     <div class="poster" data-mposter="${esc(m.name)}">
       <div class="fallback-title">${esc(movieDisplayName(m))}</div>
       ${rating}
       ${rwBadge}
-      ${rwBtn}
-      ${delBtn}
-      <button class="find-poster" data-mfind="${esc(m.name)}" title="Chercher une affiche sur TMDB">🔍</button>
-      ${btn}
+      ${MORE_BTN}
       ${prog ? `<div class="card-progress">${progressBarHtml(prog)}</div>` : ''}
     </div>
     <div class="title">${esc(movieDisplayName(m))}</div>
@@ -2247,40 +2331,6 @@ function movieCardHtml(m) {
 
 function wireMovieButtons(container) {
   container.querySelectorAll('.movie-card').forEach(c => c.onclick = () => openMovie(c.dataset.mname));
-  container.querySelectorAll('[data-movie]').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      setMovieStatus(b.dataset.movie, b.dataset.to);
-      toast(b.dataset.to === 'watched' ? 'Film marqué comme vu' : 'Film remis dans « à voir »');
-      render();
-    };
-  });
-  container.querySelectorAll('[data-mrw]').forEach(b => {
-    const name = b.dataset.mrw;
-    const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === name);
-    if (!m) return;
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      const prev = movieRewatchOf(m);
-      setMovieRewatch(name, prev + 1); render();
-      toastUndo(`🔁 ${movieDisplayName(m)} : vu ${prev + 2} fois`, () => { setMovieRewatch(name, prev); render(); });
-    };
-    onLongPress(b, () => openRewatchStepper(movieDisplayName(m), () => movieRewatchOf(m), (c) => setMovieRewatch(name, c), render));
-  });
-  container.querySelectorAll('[data-mfind]').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      openPosterSearch('movie', { name: b.dataset.mfind });
-    };
-  });
-  container.querySelectorAll('[data-mdel]').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      removeCustomMovie(b.dataset.mdel);
-      toast('Film retiré');
-      render();
-    };
-  });
 }
 
 // Resolve a movie poster from TMDB by name (+year), cached in tmdbCache.movies.
@@ -2302,11 +2352,13 @@ function pickMovieHit(results, name, year) {
   return best;
 }
 const MOVIE_RESOLVER = 3; // bump to re-check every cached match once
-async function resolveMovie(name, year) {
+// strict = relance l'erreur réseau (nettoyage des « introuvables ») ; retryNull = retente un film marqué introuvable.
+// « Introuvable » (null) n'est mémorisé que si TMDB a répondu sans résultat, jamais sur une erreur.
+async function resolveMovie(name, year, strict, retryNull) {
   if (!tmdbCache.movies) tmdbCache.movies = {};
   const cached = tmdbCache.movies[name];
   // Déjà résolu avec la méthode actuelle OU marqué introuvable -> on garde.
-  if (cached === null || (cached && 'title' in cached && cached.v === MOVIE_RESOLVER)) return cached;
+  if ((cached === null && !retryNull) || (cached && 'title' in cached && cached.v === MOVIE_RESOLVER)) return cached;
   try {
     const enc = encodeURIComponent(name);
     let results = (await tmdbFetch(`/search/movie?query=${enc}${year ? '&year=' + year : ''}`)).results || [];
@@ -2317,7 +2369,7 @@ async function resolveMovie(name, year) {
       hit = pickMovieHit(results, name, year);
     }
     tmdbCache.movies[name] = hit ? { id: hit.id, poster: hit.poster_path || null, title: hit.title || null, v: MOVIE_RESOLVER } : null;
-  } catch { if (!cached) tmdbCache.movies[name] = null; }
+  } catch (e) { if (strict) throw e; return cached === undefined ? null : cached; }
   scheduleSaveCache();
   return tmdbCache.movies[name];
 }
@@ -2331,6 +2383,38 @@ async function refreshMovieMatches() {
   tmdbCache.movieResolver = MOVIE_RESOLVER;
   scheduleSaveCache();
   reconcileDuplicateMovies();
+}
+
+// Nettoyage unique des « introuvables » mémorisés (anciennes erreurs réseau possibles) : on les retente doucement, 3 à la fois
+// avec une pause, en arrière-plan. Un « introuvable » n'est remplacé que si TMDB répond ; si le réseau échoue, on recommence au
+// prochain démarrage (tmdbCache.nullRetry n'est posé qu'une fois tout vérifié).
+const NULL_RETRY = 1;
+async function retryNullMatches() {
+  if (!hasKey() || (tmdbCache.nullRetry || 0) >= NULL_RETRY) return;
+  const items = [];
+  for (const k of Object.keys(tmdbCache.map || {})) if (tmdbCache.map[k] === null && !(userState.showTmdb && userState.showTmdb[k] != null)) items.push({ tv: true, k });
+  for (const n of Object.keys(tmdbCache.movies || {})) if (tmdbCache.movies[n] === null) items.push({ tv: false, k: n });
+  const movies = (DATA.movies || []).concat(userState.customMovies || []);
+  let failures = 0, fixed = 0, fixedMovies = 0;
+  for (let i = 0; i < items.length && failures < 5; i += 3) {
+    await Promise.all(items.slice(i, i + 3).map(async (it) => {
+      try {
+        if (it.tv) {
+          const res = await tmdbFetch(`/find/${it.k}?external_source=tvdb_id`);
+          const hit = (res.tv_results && res.tv_results[0]) || null;
+          if (hit) { tmdbCache.map[it.k] = hit.id; fixed++; }
+        } else {
+          const mv = movies.find(x => x.name === it.k);
+          const r = await resolveMovie(it.k, mv ? movieYear(mv) : undefined, true, true);
+          if (r) { fixed++; fixedMovies++; }
+        }
+      } catch { failures++; }
+    }));
+    scheduleSaveCache();
+    await new Promise(r => setTimeout(r, 600));
+  }
+  if (!failures) { tmdbCache.nullRetry = NULL_RETRY; scheduleSaveCache(); }
+  if (fixed) { _nextInfo.clear(); if (fixedMovies) reconcileDuplicateMovies(); MODEL = null; console.info(`Nettoyage : ${fixed} « introuvable(s) » retrouvé(s) sur TMDB`); }
 }
 
 async function hydrateMoviePosters(container, list) {
@@ -2478,10 +2562,10 @@ route('library', async (el) => {
     <div class="grid" id="libGrid"></div>`;
 
   const seriesTabs = [
-    ['following', 'Je suis', s => s.followed && !s.archived],
+    ['following', 'Suivies', s => s.followed && !s.archived],
     ['watchlist', 'À voir plus tard', s => userState.watchlist[s.key] || s.specialStatus === 'for_later'],
     ['favorites', 'Favoris', s => isFavShow(s)],
-    ['archived', 'Archivées', s => s.archived],
+    ['archived', 'Arrêtées', s => s.archived],
     ['all', 'Tout', () => true],
   ];
   const movieTabs = [
@@ -2572,8 +2656,7 @@ route('library', async (el) => {
       if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">🍿</div>Aucune série ici.</div>`; return; }
       grid.innerHTML = list.map(s => cardHtml(s)).join('');
       grid.querySelectorAll('.show-card').forEach(c => c.onclick = () => openShow(c.dataset.key));
-      wireCardArchive(grid);
-      hydratePosters(grid, list);
+        hydratePosters(grid, list);
     }
   }
 
@@ -2603,21 +2686,20 @@ function progressBarHtml(prog) {
   return (prog.base ? `<span class="bar-base ${prog.base}"></span>` : '') + `<span class="bar ${prog.cls}" style="width:${prog.pct}%"></span>`;
 }
 
+// Bouton « ⋯ » (toujours visible) : ouvre la feuille d'actions de l'œuvre (voir openCardActions).
+const MORE_BTN = '<button type="button" class="card-more" aria-label="Actions">⋯</button>';
+
 function cardHtml(s) {
   const seen = s.seenKeys.size;
   const tag = isFavShow(s) ? 'Favori' : (s.archived ? 'Arrêtée' : '');
   const name = displayName(s);
-  const arch = s.archived
-    ? `<button class="card-arch" data-arch="${esc(s.key)}" title="Reprendre cette série">↩</button>`
-    : `<button class="card-arch" data-arch="${esc(s.key)}" title="Arrêter de suivre / archiver">⏹</button>`;
   const prog = showProgress(s, metaFor(s));
   return `<div class="show-card" data-key="${esc(s.key)}">
     <div class="poster" data-poster="${esc(s.key)}">
       <div class="fallback-title">${esc(name)}</div>
       ${tag ? `<span class="badge-tag">${tag}</span>` : ''}
-      <button class="find-poster" data-find="${esc(s.key)}" title="Chercher une affiche sur TMDB">🔍</button>
-      ${seen ? `<button class="card-pin${isPinnedWatching(s) ? ' on' : ''}" data-pin="${esc(s.key)}" title="${isPinnedWatching(s) ? 'Retirer de « À voir »' : 'Marquer « en cours » (À voir)'}">📌</button>` : ''}
-      ${arch}
+      ${isPinnedWatching(s) ? '<span class="badge-pin" title="Épinglée">📌</span>' : ''}
+      ${MORE_BTN}
       ${seen ? `<div class="card-progress">${progressBarHtml(prog)}</div>` : ''}
     </div>
     <div class="title">${esc(name)}</div>
@@ -2625,73 +2707,131 @@ function cardHtml(s) {
   </div>`;
 }
 
-// Wire the archive/resume button that overlays each show card.
-function wireCardArchive(container) {
-  container.querySelectorAll('[data-arch]').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      const sh = MODEL.shows.get(b.dataset.arch);
-      if (!sh) return;
-      const apply = () => { toggleArchived(sh); toast(sh.archived ? 'Série arrêtée / archivée' : 'Série reprise'); render(); };
-      if (sh.archived) { apply(); return; }
-      showModal(`<h2>Arrêter cette série ?</h2>
-        <p><strong>${esc(displayName(sh))}</strong> sera rangée dans « ⏹ Arrêtées » et n'apparaîtra plus dans vos catégories.</p>
-        <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="archGo">Arrêter</button></div>`,
-        (root) => { root.querySelector('#archGo').onclick = () => { closeModal(); apply(); }; });
-    };
-  });
-  container.querySelectorAll('[data-find]').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      const sh = MODEL.shows.get(b.dataset.find);
-      if (sh) openPosterSearch('tv', sh);
-    };
-  });
-  container.querySelectorAll('[data-pin]').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      const sh = MODEL.shows.get(b.dataset.pin);
-      if (!sh) return;
-      const pinned = isPinnedWatching(sh);
-      showModal(`<h2>${pinned ? 'Retirer de « En cours » ?' : 'Épingler dans « En cours » ?'}</h2>
-        <p><strong>${esc(displayName(sh))}</strong> ${pinned ? 'ne sera plus forcée dans « En cours » et retrouvera sa catégorie habituelle.' : 'restera dans « En cours » même si vous ne la regardez pas pendant longtemps.'}</p>
-        <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="pinGo">${pinned ? 'Retirer' : 'Épingler'}</button></div>`,
-        (root) => { root.querySelector('#pinGo').onclick = () => {
-          closeModal();
-          togglePinWatching(sh);
-          toast(isPinnedWatching(sh) ? 'Ajoutée à « À voir »' : 'Retirée de « À voir »');
-          render();
-        }; });
-    };
-  });
+// Feuille en bas d'écran : style + clics sur le fond ignorés pendant 400 ms (clic fantôme au relâchement d'un appui long).
+function sheetStyle(root) {
+  const bd = root.querySelector('.backdrop');
+  bd.classList.add('sheet-bd');
+  const t0 = Date.now();
+  bd.addEventListener('click', (e) => { if (Date.now() - t0 < 400) e.stopImmediatePropagation(); }, true);
+}
+// ---- Feuille d'actions (⋯) : la même depuis la fiche et depuis l'affiche ----
+// items = [{ icon, label, sub?, on?, danger?, run }] ; un appui ferme la feuille puis lance run().
+function openActionSheet(title, items) {
+  showModal(`<h2>${esc(title)}</h2>
+    <div class="sheet-list">${items.map((it, i) => `<button type="button" class="sheet-item${it.on ? ' on' : ''}${it.danger ? ' danger' : ''}" data-i="${i}">
+      <span class="si-ico">${it.icon}</span><span class="si-txt">${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</span></button>`).join('')}</div>
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`,
+    (root) => {
+      sheetStyle(root);
+      root.querySelectorAll('.sheet-item').forEach(b => b.onclick = () => { closeModal(); items[+b.dataset.i].run(); });
+    });
 }
 
-// ---- Touch: long-press a series card to reveal its action buttons ----
-// (On desktop the buttons already appear on hover; on touch they stay hidden
-//  so posters look clean, and a ~0.5s press reveals them.)
-let _lpTimer = null, _lpFired = false;
-function clearCardActions() {
-  document.querySelectorAll('.show-card.show-actions').forEach(c => c.classList.remove('show-actions'));
+// Série : TMDB + fiche (nécessaires pour « Marquer une saison vue » et « Ajouter un épisode » depuis une affiche).
+async function showMetaFor(sh) {
+  let tmdbId = null, meta = null;
+  if (hasKey()) {
+    try { tmdbId = overrideShowTmdb(sh) || (sh.tvdbId ? await resolveTmdbId(sh.tvdbId) : null); } catch {}
+    if (tmdbId) { try { meta = await getShowMeta(tmdbId); } catch {} }
+  }
+  return { meta, tmdbId };
 }
+function confirmStopShow(sh) {
+  showModal(`<h2>Arrêter cette série ?</h2>
+    <p><strong>${esc(displayName(sh))}</strong> sera rangée dans « ⏹ Arrêtées » et n'apparaîtra plus dans vos catégories.</p>
+    <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="archGo">Arrêter</button></div>`,
+    (root) => { root.querySelector('#archGo').onclick = () => { closeModal(); toggleArchived(sh); toast('Série arrêtée'); render(); }; });
+}
+// Liste des actions d'une série. ctx = { meta, tmdbId } si la fiche les a déjà (sinon chargés à la demande).
+function showActionItems(sh, ctx) {
+  const fav = isFavShow(sh), pin = isPinnedWatching(sh), later = !!userState.watchlist[sh.key];
+  const items = [
+    { icon: fav ? '❤️' : '♡', label: fav ? 'Dans mes favoris' : 'Ajouter aux favoris', sub: fav ? 'Toucher pour retirer' : '', on: fav,
+      run: () => { toggleFavShow(sh); toast(isFavShow(sh) ? 'Ajoutée aux favoris' : 'Retirée des favoris'); render(); } },
+    { icon: '📌', label: pin ? 'Épinglée dans « En cours »' : 'Épingler dans « En cours »', sub: pin ? 'Toucher pour désépingler' : 'Reste dans « En cours » même sans visionnage récent', on: pin,
+      run: () => { togglePinWatching(sh); toast(isPinnedWatching(sh) ? 'Série épinglée' : 'Série désépinglée'); render(); } },
+    { icon: '🕒', label: later ? '✓ À voir plus tard' : '+ À voir plus tard', sub: later ? 'Toucher pour retirer' : '', on: later,
+      run: () => { toggleWatchlist(sh); toast(userState.watchlist[sh.key] ? 'Ajoutée à « À voir plus tard »' : 'Retirée de « À voir plus tard »'); render(); } },
+    { icon: '📃', label: 'Ajouter à une liste', run: () => openAddToListModal('tv', sh) },
+  ];
+  if (isRewatching(sh)) items.push({ icon: '🔁', label: 'Arrêter le revisionnage', run: () => { if (userState.rewatching) delete userState.rewatching[sh.key]; scheduleSaveState(); toast('Revisionnage arrêté'); render(); } });
+  items.push(sh.archived
+    ? { icon: '▶', label: 'Reprendre la série', run: () => { toggleArchived(sh); toast('Série reprise'); render(); } }
+    : { icon: '⏹', label: 'Arrêter la série', sub: 'La range dans « Arrêtées »', run: () => confirmStopShow(sh) });
+  items.push({ icon: '✅', label: 'Marquer une saison vue…', run: async () => { const c = ctx || await showMetaFor(sh); markSeasonPrompt(sh, c.meta, c.tmdbId); } });
+  items.push({ icon: '➕', label: 'Ajouter un épisode', run: async () => { const c = ctx || await showMetaFor(sh); addEpisodePrompt(sh, c.meta); } });
+  items.push({ icon: '🔍', label: 'Chercher une affiche', run: () => openPosterSearch('tv', sh) });
+  if (sh.custom) items.push({ icon: '🗑', label: 'Retirer de ma bibliothèque', danger: true, run: async () => { if (!await askModal(`<h2>Retirer cette série ?</h2><p><strong>${esc(displayName(sh))}</strong> sera retirée de votre bibliothèque (série ajoutée à la main ; ses épisodes vus restent enregistrés).</p>`, 'Annuler', 'Retirer')) return; removeCustomShow(sh.key); toast('Série retirée'); if (location.hash.startsWith('#/show/')) location.hash = '#/home'; render(); } });
+  return items;
+}
+function openShowActions(sh, ctx) { openActionSheet(displayName(sh), showActionItems(sh, ctx)); }
+
+// Film : liste des actions.
+function movieActionItems(m) {
+  const st = movieStatus(m), rw = movieRewatchOf(m), fav = isFavMovie(m);
+  const items = [];
+  if (st === 'watched') {
+    items.push({ icon: '🔁', label: 'Je l’ai revu', sub: rw > 0 ? `Vu ${rw + 1} fois` : '', run: () => {
+      setMovieRewatch(m.name, rw + 1); render();
+      toastUndo(`🔁 ${movieDisplayName(m)} : vu ${rw + 2} fois`, () => { setMovieRewatch(m.name, rw); render(); });
+    } });
+    if (rw > 0) items.push({ icon: '✏️', label: 'Corriger le nombre de visionnages', run: () => openRewatchStepper(movieDisplayName(m), () => movieRewatchOf(m), (c) => setMovieRewatch(m.name, c), render) });
+    items.push({ icon: '↩', label: 'Remettre dans « À voir »', run: () => { setMovieStatus(m.name, 'towatch'); toast('Remis dans « À voir »'); render(); } });
+  } else {
+    items.push({ icon: '✓', label: 'Je l’ai vu', run: () => { setMovieStatus(m.name, 'watched'); toast('Film marqué comme vu'); render(); } });
+  }
+  items.push({ icon: fav ? '❤️' : '♡', label: fav ? 'Dans mes favoris' : 'Ajouter aux favoris', sub: fav ? 'Toucher pour retirer' : '', on: fav,
+    run: () => { toggleFavMovie(m); toast(isFavMovie(m) ? 'Ajouté aux favoris' : 'Retiré des favoris'); render(); } });
+  items.push({ icon: '📃', label: 'Ajouter à une liste', run: () => openAddToListModal('movie', m) });
+  items.push({ icon: '🔍', label: 'Chercher une affiche', run: () => openPosterSearch('movie', { name: m.name }) });
+  if (isCustomMovie(m)) items.push({ icon: '🗑', label: 'Retirer de ma bibliothèque', danger: true, run: async () => { if (!await askModal(`<h2>Retirer ce film ?</h2><p><strong>${esc(movieDisplayName(m))}</strong> sera retiré de votre bibliothèque (film ajouté à la main).</p>`, 'Annuler', 'Retirer')) return; removeCustomMovie(m.name); toast('Film retiré'); if (location.hash.startsWith('#/movie/')) location.hash = '#/movies'; render(); } });
+  return items;
+}
+function openMovieActions(m) { openActionSheet(movieDisplayName(m), movieActionItems(m)); }
+
+// Ouvre la feuille d'actions d'une affiche (série ou film) : bouton ⋯ ou appui long.
+function openCardActions(card) {
+  if (card.dataset.mname) {
+    const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === card.dataset.mname);
+    if (m) openMovieActions(m);
+  } else if (card.dataset.key) {
+    buildModel();
+    const sh = MODEL.shows.get(card.dataset.key);
+    if (sh) openShowActions(sh);
+  }
+}
+// Le bouton ⋯ marche partout (Séries, Films, Bibliothèque, favoris, listes) sans câblage par page.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('.card-more');
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  const card = b.closest('.show-card');
+  if (card) openCardActions(card);
+}, true);
+
+// ---- Tactile : un appui long sur une affiche ouvre la feuille d'actions (raccourci du bouton ⋯) ----
+let _lpTimer = null, _lpFired = false;
 function _lpCancel() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } }
 document.addEventListener('touchstart', (e) => {
   const t = e.target;
-  if (t.closest && t.closest('button')) return;          // let action buttons work
+  if (t.closest && t.closest('button')) return;          // les boutons gardent leur geste
   const card = t.closest && t.closest('.show-card');
-  if (!card) { clearCardActions(); return; }              // tap outside -> hide actions
+  if (!card || !(card.dataset.key || card.dataset.mname)) return;
   _lpFired = false;
   _lpCancel();
   _lpTimer = setTimeout(() => {
     _lpTimer = null; _lpFired = true;
-    clearCardActions();
-    card.classList.add('show-actions');
+    _sw = null; // le glissement entre onglets s'arrête : la page ne bouge pas derrière la feuille
     if (navigator.vibrate) { try { navigator.vibrate(12); } catch {} }
+    openCardActions(card);
   }, 480);
 }, { passive: true });
 document.addEventListener('touchmove', _lpCancel, { passive: true });
 document.addEventListener('touchend', _lpCancel, { passive: true });
 document.addEventListener('touchcancel', _lpCancel, { passive: true });
-// Suppress the navigation click that immediately follows a long-press.
+// Pas de menu natif (« Télécharger l'image »…) sur les affiches
+document.addEventListener('contextmenu', (e) => { if (e.target.closest && e.target.closest('.show-card')) e.preventDefault(); });
+// Supprime le clic de navigation qui suit immédiatement un appui long.
 document.addEventListener('click', (e) => {
   if (!_lpFired) return;
   _lpFired = false;
@@ -2927,20 +3067,14 @@ route('show', async (el, rest) => {
             <span class="chip">${sh.seenKeys.size} épisode(s) vu(s)${meta && meta.totalEpisodes ? ' / ' + airedTotal(meta) : ''}${meta && meta.totalEpisodes > airedTotal(meta) ? ` · ${meta.totalEpisodes - airedTotal(meta)} à venir` : ''}</span>
             ${isRewatching(sh) ? `<span class="chip">🔁 Revisionnage${(function(){ const p = rewatchPass(sh); return p ? ` ${p.done}/${p.total}` : ''; })()}</span>` : ''}
           </div>
+          <div id="nextEpLine"></div>
           <div class="movie-react show-react"><span class="react-label">Ma réaction</span>${reactPickerHtml(showScore(sh), true, !sh.seenKeys.size)}</div>
           ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
           <div class="overview">${esc(meta ? meta.overview : '')}</div>
           <div class="detail-actions">
-            <button class="btn ${userState.watchlist[sh.key] ? 'primary' : ''}" id="btnWatch">${userState.watchlist[sh.key] ? '✓ Dans « à voir »' : '+ À voir plus tard'}</button>
-            <button class="btn ${isFavShow(sh) ? 'primary' : ''}" id="btnFav">${isFavShow(sh) ? '❤️ Favori' : '🤍 Favori'}</button>
-            <button class="btn" id="btnAddList">📃 Ajouter à une liste</button>
-            <button class="btn ${isPinnedWatching(sh) ? 'primary' : ''}" id="btnPin">${isPinnedWatching(sh) ? '📌 En cours ✓' : '📌 Marquer « en cours »'}</button>
-            ${isRewatching(sh) ? `<button class="btn" id="btnStopRewatch">🔁 Arrêter le revisionnage</button>` : ''}
-            <button class="btn" id="btnArchive">${sh.archived ? 'Reprendre' : 'Arrêter / Archiver'}</button>
-            <button class="btn" id="btnMarkSeason">Marquer une saison vue…</button>
-            <button class="btn" id="btnAddEp">➕ Ajouter un épisode</button>
-            <button class="btn" id="btnFindPoster">🔍 Chercher une affiche</button>
-            ${sh.custom ? `<button class="btn danger" id="btnRemoveShow">🗑 Retirer</button>` : ''}
+            <button class="btn ${isFavShow(sh) ? 'on' : ''}" id="btnFav">${isFavShow(sh) ? '❤️ Dans mes favoris' : '♡ Ajouter aux favoris'}</button>
+            <button class="btn ${isPinnedWatching(sh) ? 'on' : ''}" id="btnPin">${isPinnedWatching(sh) ? '📌 Épinglée' : '📌 Épingler'}</button>
+            <button class="btn" id="btnMore" aria-label="Plus d’actions">⋯ Plus</button>
           </div>
         </div>
       </div>
@@ -2956,22 +3090,46 @@ route('show', async (el, rest) => {
   wireReactPicker(el.querySelector('.show-react'), () => showScore(sh), (v) => setShowScore(sh, v), () => sh.seenKeys.size > 0);
   wireTrailer(el);
   if (meta) fillRelated(el, 'tv', meta.id);
-  el.querySelector('#btnWatch').onclick = () => { toggleWatchlist(sh); render(); };
   el.querySelector('#btnFav').onclick = () => { toggleFavShow(sh); toast(isFavShow(sh) ? 'Ajoutée aux favoris' : 'Retirée des favoris'); render(); };
-  el.querySelector('#btnAddList').onclick = () => openAddToListModal('tv', sh);
-  el.querySelector('#btnPin').onclick = () => { togglePinWatching(sh); toast(isPinnedWatching(sh) ? 'Ajoutée à « À voir »' : 'Retirée de « À voir »'); render(); };
-  el.querySelector('#btnArchive').onclick = () => { toggleArchived(sh); render(); };
-  el.querySelector('#btnMarkSeason').onclick = () => markSeasonPrompt(sh, meta, tmdbId);
-  el.querySelector('#btnAddEp').onclick = () => addEpisodePrompt(sh, meta);
-  el.querySelector('#btnFindPoster').onclick = () => openPosterSearch('tv', sh);
-  const rmBtn = el.querySelector('#btnRemoveShow');
-  if (rmBtn) rmBtn.onclick = () => { removeCustomShow(sh.key); toast('Série retirée'); location.hash = '#/home'; render(); };
-  const bsr = el.querySelector('#btnStopRewatch');
-  if (bsr) bsr.onclick = () => { if (userState.rewatching) delete userState.rewatching[sh.key]; scheduleSaveState(); toast('Revisionnage arrêté'); render(); };
+  el.querySelector('#btnPin').onclick = () => { togglePinWatching(sh); toast(isPinnedWatching(sh) ? 'Série épinglée' : 'Série désépinglée'); render(); };
+  el.querySelector('#btnMore').onclick = () => openShowActions(sh, { meta, tmdbId });
 
   renderAppreciation(el.querySelector('#apprSlot'), 'tv', tmdbId, meta);
   if (meta) await renderSeasons(el.querySelector('#seasons'), sh, tmdbId, meta, fresh);
+  if (meta) {
+    fillNextEpLine(el, sh);
+    // Après un « vu » dans la liste des épisodes, la ligne « Prochain épisode » suit (calcul mémorisé : instantané).
+    const sea = el.querySelector('#seasons');
+    if (sea) sea.addEventListener('click', () => setTimeout(() => fillNextEpLine(el, sh), 150));
+    // Fenêtres « Marquer une saison vue » / « marquer les précédents » (hors de #seasons)
+    const mr = document.getElementById('modalRoot');
+    if (mr) {
+      if (_nextLineModalFn) mr.removeEventListener('click', _nextLineModalFn);
+      _nextLineModalFn = () => setTimeout(() => { if (location.hash.startsWith('#/show/')) fillNextEpLine(el, sh); }, 300);
+      mr.addEventListener('click', _nextLineModalFn);
+    }
+  }
 });
+
+let _nextLineModalFn = null;
+// Ligne « Prochain épisode » sous l'en-tête de la fiche série (même calcul que « Prochains épisodes » : nextEpisodeInfo).
+async function fillNextEpLine(el, sh) {
+  const slot = el.querySelector('#nextEpLine');
+  if (!slot || !hasKey() || !(sh.seenKeys.size > 0 || isPinnedWatching(sh))) return;
+  let info = null;
+  try { info = await nextEpisodeInfo(sh); } catch {}
+  if (!slot.isConnected) return;
+  const e = info && !info.rewatch ? (info.next || info.soon) : null;
+  if (!e) { slot.innerHTML = ''; return; }
+  const tag = e.s != null ? epTag(sh, e.s, e.n) : '';
+  let txt;
+  if (info.next) {
+    const d = e.air ? daysFromToday(e.air) : NaN;
+    txt = `▶ Prochain épisode : ${tag} · ` + (isNaN(d) ? 'disponible' : d === 0 ? "disponible aujourd’hui" : `disponible depuis le ${fmtDayLong(e.air, false)}`);
+  } else txt = `📅 Prochain épisode : ${tag ? tag + ' · ' : ''}${fmtDayLong(e.air)} (${inDays(e.air)})`;
+  slot.innerHTML = `<button type="button" class="next-ep-line">${esc(txt)}</button>`;
+  slot.querySelector('button').onclick = () => { if (e.s != null) openEpisode(sh.key, e.s, e.n); };
+}
 
 //////////////////////// Episode detail ////////////////////////
 // Previous / next episode of the episode page (specials stay among specials).
@@ -3049,7 +3207,7 @@ route('episode', async (el, rest) => {
       <p class="synopsis-text ep-synopsis ${hideSpoil ? 'spoil' : ''}">${esc(overviewTxt)}</p>
       <div class="detail-actions">
         <button class="btn ${seen ? 'primary' : ''}" id="epSeen">${seen ? '✓ Vu' : 'Marquer comme vu'}</button>
-        <button class="btn" id="epRw">🔁 +1 visionnage${rw > 0 ? ` (×${rw + 1})` : ''}</button>
+        <button class="btn" id="epRw">🔁 Je l’ai revu${rw > 0 ? ` · Vu ${rw + 1} fois` : ''}</button>
         ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
       </div>
       <div class="ep-react">
@@ -3270,7 +3428,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
       const allSeen = aired.every(e => isSeen(sh, sn, e.n));
       if (allSeen) {
         aired.forEach(e => setRewatch(sh, sn, e.n, rewatchOf(sh, sn, e.n) + 1));
-        toast('Saison marquée comme revue (+1 visionnage)');
+        toast('Saison marquée comme revue');
       } else {
         aired.forEach(e => { if (!isSeen(sh, sn, e.n)) toggleSeen(sh, sn, e.n, true); });
         toast('Saison marquée comme vue');
@@ -3323,10 +3481,31 @@ function epHtml(sh, season, e, pass) {
     <div class="check ${seen ? 'on' : ''}" data-act="seen">✓</div>
     <div class="num">${epTag(sh, season, e.n)}</div>
     <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + epDisp(sh, season, e.n).n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
-    <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Visionnages — appui : +1 · appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
-    ${reactPickerHtml(epScore(k), false)}
+    <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" title="Je l’ai revu — appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
+    ${epReactBtnHtml(epScore(k))}
     ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">🗑</button>` : ''}
   </div>`;
+}
+
+// Liste d'épisodes : la réaction choisie seule (ou 😀 discret) ; masqué tant que l'épisode n'est pas vu (CSS .ep:not(.seen)).
+function epReactBtnHtml(v) {
+  const r = reactOfScore(v);
+  return `<button type="button" class="ep-react-btn${r ? ' has' : ''}" data-act="react" aria-label="Ma réaction">${r ? r.emoji : '😀'}</button>`;
+}
+// Feuille de choix de la réaction : 5 grands boutons ; retoucher la réaction choisie l'enlève.
+function openReactSheet(title, get, set, onDone) {
+  const v = get();
+  showModal(`<h2>${esc(title)}</h2>
+    <p class="hint">Ma réaction · touchez la réaction choisie pour l’enlever</p>
+    <div class="react-sheet">${REACT_SCALE.map(r => `<button type="button" data-v="${r.v}" class="${v === r.v ? 'on' : ''}"><span class="rsh-e">${r.emoji}</span><span class="rsh-l">${esc(r.label)}</span></button>`).join('')}</div>
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`,
+    (root) => {
+      sheetStyle(root);
+      root.querySelectorAll('.react-sheet button').forEach(b => b.onclick = () => {
+        const x = parseInt(b.dataset.v, 10);
+        set(get() === x ? 0 : x); closeModal(); if (onDone) onDone();
+      });
+    });
 }
 
 // ---- Fin de série : célébration + confettis ----
@@ -3432,7 +3611,14 @@ function wireEpisodes(container, sh, season, onChange, opts) {
       toastUndo(`🔁 ${epSE(sh, season, n)} : vu ${prev + 2} fois`, () => { setRewatch(sh, season, n, prev); paintRw(); onChange(); });
     };
     onLongPress(rwEl, () => openRewatchStepper(epTitle, () => rewatchOf(sh, season, n), (c) => setRewatch(sh, season, n, c), () => { paintRw(); onChange(); }));
-    wireReactPicker(row, () => epScore(epKey(sh.key, season, n)), (v) => setEpScore(sh, season, n, v), () => sh.seenKeys.has(epKey(sh.key, season, n)));
+    const reactBtn = row.querySelector('[data-act="react"]');
+    if (reactBtn) reactBtn.onclick = () => {
+      const ek = epKey(sh.key, season, n);
+      openReactSheet(epTitle, () => epScore(ek), (v) => setEpScore(sh, season, n, v), () => {
+        const r = reactOfScore(epScore(ek));
+        reactBtn.textContent = r ? r.emoji : '😀'; reactBtn.classList.toggle('has', !!r); onChange();
+      });
+    };
     const del = row.querySelector('[data-act="delcustom"]');
     if (del) del.onclick = () => { removeCustomEpisode(sh, season, n); render(); };
     const nameEl = row.querySelector('.epname[data-act="open"]');
@@ -3510,7 +3696,9 @@ function markSeasonPrompt(sh, meta, tmdbId) {
     (root) => {
       root.querySelector('#mGo').onclick = async () => {
         const s = parseInt(root.querySelector('#mS').value, 10);
-        const eps = await getSeasonEpisodes(tmdbId, s);
+        let eps;
+        try { eps = await getSeasonEpisodes(tmdbId, s); } catch { toast('Saison indisponible pour l’instant (réseau ?) : rien n’a été coché'); return; }
+        if (!eps.length) { toast('Aucun épisode connu pour cette saison : rien n’a été coché'); return; }
         eps.forEach(e => toggleSeen(sh, s, e.n, true));
         closeModal(); render(); toast(`Saison ${s} marquée vue`);
       };
@@ -3518,57 +3706,290 @@ function markSeasonPrompt(sh, meta, tmdbId) {
 }
 
 
+// ---- Dates relatives en français (jours LOCAUX : les dates TMDB sont des jours AAAA-MM-JJ, sans heure) ----
+const DAYS_FR = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+const MONTHS_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+// Numéro de jour (entier) d'une date AAAA-MM-JJ ; NaN si ce n'est pas une date.
+function dayNumOf(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ''));
+  return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / MS_DAY) : NaN;
+}
+function todayDayNum() { const d = new Date(); return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / MS_DAY); }
+// Nombre de jours entre aujourd'hui et la date (> 0 : à venir, < 0 : passé) ; NaN si date invalide.
+const daysFromToday = (dateStr) => dayNumOf(dateStr) - todayDayNum();
+// « jeudi 20 nov. » (avec l'année si ce n'est pas l'année en cours) ; withWeekday = false → « 20 nov. ».
+function fmtDayLong(dateStr, withWeekday = true) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ''));
+  if (!m) return '';
+  const wd = DAYS_FR[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+  return (withWeekday ? wd + ' ' : '') + (+m[3]) + ' ' + MONTHS_FR[+m[2] - 1] + (+m[1] !== new Date().getFullYear() ? ' ' + m[1] : '');
+}
+// « aujourd'hui », « demain », « hier », « jeudi » (dans moins de 7 jours), « jeudi dernier » (il y a moins de 7 jours),
+// sinon « jeudi 20 nov. ».
+function relDay(dateStr) {
+  const d = daysFromToday(dateStr);
+  if (isNaN(d)) return '';
+  if (d === 0) return "aujourd'hui";
+  if (d === 1) return 'demain';
+  if (d === -1) return 'hier';
+  const wd = DAYS_FR[((dayNumOf(dateStr) + 4) % 7 + 7) % 7]; // 1er janv. 1970 = jeudi
+  if (d > 1 && d < 7) return wd;
+  if (d < -1 && d > -7) return wd + ' dernier';
+  return fmtDayLong(dateStr);
+}
+// « dans 3 jours » / « il y a 2 jours » (« demain », « hier », « aujourd'hui » pour les cas proches).
+function inDays(dateStr) {
+  const d = daysFromToday(dateStr);
+  if (isNaN(d)) return '';
+  if (d === 0) return "aujourd'hui";
+  if (d === 1) return 'demain';
+  if (d === -1) return 'hier';
+  const a = Math.abs(d);
+  const span = a >= 365 ? `${Math.round(a / 365)} an${Math.round(a / 365) > 1 ? 's' : ''}` : a >= 60 ? `${Math.round(a / 30)} mois` : `${a} jours`;
+  return d > 0 ? 'dans ' + span : 'il y a ' + span;
+}
+
+//////////////////////// Prochain épisode (« Prochains épisodes » + fiche série) ////////////////////////
+// nextEpisodeInfo(sh) = UN seul calcul pour la page « Prochains épisodes » et la ligne « Prochain épisode » de la fiche série.
+// Règle de reprise (comme la fiche) : premier épisode SORTI et non vu qui vient APRÈS le dernier épisode vu (saison 0 ignorée) ;
+// pendant un revisionnage, premier épisode vu mais pas encore revu dans le passage en cours.
+// Résultat : { tmdbId, poster, status, next, soon, remaining, rewatch, ended }
+//   next = { s, n, name, air } | null  (épisode à regarder maintenant)
+//   soon = { s, n, name, air } | null  (prochain épisode ANNONCÉ, date future ; s/n = null si seule la date est connue)
+//   remaining = épisodes sortis non vus après le point de reprise (revisionnage : épisodes restant à revoir)
+// null = série inconnue de TMDB / pas de clé / erreur réseau (non mémorisé). Mémorisé en mémoire pour la session
+// (clé = série, validité = signature des épisodes vus) ; force = recalcul.
+const _nextInfo = new Map(); // clé série -> { sig, p: Promise }
+function lastSeenPoint(sh) {
+  let s = -1, n = -1;
+  for (const k of sh.seenKeys) {
+    const p = k.split('|'); const S = +p[p.length - 2], N = +p[p.length - 1];
+    if (S > 0 && (S > s || (S === s && N > n))) { s = S; n = N; }
+  }
+  return { s, n };
+}
+function nextSig(sh) {
+  const lp = lastSeenPoint(sh), pass = currentPass(sh), rp = pass ? rewatchPass(sh) : null;
+  return [sh.seenKeys.size, lp.s, lp.n, sh.lastSeenAt || '', pass ? pass.level + ':' + (rp ? rp.done : '') : '',
+    customEpsForShow(sh).length, overrideShowTmdb(sh) || sh.tvdbId || '', hasKey() ? 1 : 0, userState.tmdbKey ? 1 : 0, _seasonVer, (metaFor(sh) || {}).fetchedAt || 0].join('|');
+}
+function nextEpisodeInfo(sh, force, forceSeasons) {
+  const sig = nextSig(sh), c = _nextInfo.get(sh.key);
+  if (!force && c && c.sig === sig) return c.p;
+  const entry = { sig, p: null };
+  entry.p = computeNextInfo(sh, forceSeasons).then((r) => { if (r && r.partial && _nextInfo.get(sh.key) === entry) _nextInfo.delete(sh.key); return r; }) // saison non chargée (hors-ligne, 429) : pas mémorisé, retenté au prochain affichage
+    .catch(() => { if (_nextInfo.get(sh.key) === entry) _nextInfo.delete(sh.key); return null; });
+  _nextInfo.set(sh.key, entry);
+  return entry.p;
+}
+async function computeNextInfo(sh, forceSeasons) {
+  if (!hasKey()) return null;
+  const tmdbId = overrideShowTmdb(sh) || (sh.tvdbId ? await resolveTmdbId(sh.tvdbId) : null);
+  if (!tmdbId) {
+    // Vrai « introuvable » (mémorisé dans tmdbCache.map) -> null ; sinon erreur de résolution -> résultat partiel, non mémorisé.
+    if (!sh.tvdbId || (sh.tvdbId in tmdbCache.map)) return null;
+    return { tmdbId: null, poster: null, status: '', next: null, soon: null, remaining: 0, rewatch: false, ended: false, partial: true, unknown: true };
+  }
+  let meta = tmdbCache.shows[tmdbId];
+  if (!meta || !meta.seasons) meta = await getShowMeta(tmdbId);
+  const pass = currentPass(sh);
+  const out = { tmdbId, poster: meta.poster || null, status: meta.status || '', next: null, soon: null, remaining: 0, rewatch: !!pass, ended: false, partial: false };
+  // Série terminée sur TMDB et entièrement vue : rien à calculer (pas de réseau).
+  if (!pass && meta.status && meta.status !== 'Returning Series' && !meta.nextAir && isShowComplete(sh)) { out.ended = true; return out; }
+  const today = todayDayNum();
+  const customs = customEpsForShow(sh).filter(e => e.s > 0);
+  const tmdbSeasons = new Set((meta.seasons || []).map(s => s.n).filter(n => n > 0));
+  const all = Array.from(new Set([...tmdbSeasons, ...customs.map(e => e.s)])).sort((a, b) => a - b);
+  const lp = lastSeenPoint(sh);
+  // Perf : seulement de la saison du dernier épisode vu jusqu'à la dernière (tout, en revisionnage ou si rien n'est vu).
+  const seasons = (pass || lp.s < 0) ? all : all.filter(sn => sn >= lp.s);
+  for (const sn of seasons) {
+    let eps = [];
+    if (tmdbSeasons.has(sn)) { try { eps = await getSeasonEpisodes(tmdbId, sn, !!forceSeasons && isLiveSeason(meta, sn)); } catch { eps = []; out.partial = true; } }
+    const present = new Set(eps.map(e => e.n));
+    eps = eps.concat(customs.filter(e => e.s === sn && !present.has(e.n)).map(e => ({ n: e.n, name: e.name, air: null, custom: true })))
+      .sort((a, b) => a.n - b.n);
+    for (const e of eps) {
+      const seen = isSeen(sh, sn, e.n);
+      const item = { s: sn, n: e.n, name: e.name || '', air: e.air || null };
+      if (pass) { // revisionnage : vu mais pas encore revu dans ce passage
+        if (seen && !inCurrentPass(sh, sn, e.n, pass)) { out.remaining++; if (!out.next) out.next = item; }
+        continue;
+      }
+      if (seen) continue;
+      const aired = e.custom || (e.air && dayNumOf(e.air) <= today);
+      if (aired) {
+        if (sn > lp.s || (sn === lp.s && e.n > lp.n)) { out.remaining++; if (!out.next) out.next = item; }
+      } else if (e.air && (!out.soon || e.air < out.soon.air)) out.soon = item;
+    }
+  }
+  // Seule la date est connue (liste d'épisodes pas encore à jour) : on garde la date annoncée par la série.
+  if (!pass && !out.soon && meta.nextAir && dayNumOf(meta.nextAir) >= today) out.soon = { s: null, n: null, name: '', air: meta.nextAir };
+  return out;
+}
+// Groupe de la page « Prochains épisodes » : 'new' | 'resume' | 'soon' | 'uptodate'.
+function upnextGroup(sh, info) {
+  if (info.next) {
+    if (info.rewatch) return 'resume';
+    const ls = sh.lastSeenAt ? String(sh.lastSeenAt).slice(0, 10) : '';
+    // Nouveau : sorti APRÈS mon dernier visionnage, ou sorti récemment (newEpDays, 31 j par défaut : un rattrapage reste « nouveau »).
+    if (info.next.air && ((ls && info.next.air > ls) || daysSince(info.next.air) <= newEpDays())) return 'new';
+    // Retard : « À reprendre » si vu dans la durée « En cours » (ou épinglée), sinon « En pause ».
+    return (isPinnedWatching(sh) || !sh.lastSeenAt || daysSince(sh.lastSeenAt) <= activeDays()) ? 'resume' : 'pause';
+  }
+  return info.soon ? 'soon' : 'uptodate';
+}
+
 //////////////////////// Up Next ////////////////////////
 // Legacy #/upnext link -> now a tab inside the Séries page.
 route('upnext', () => { seriesTab = 'asuivre'; location.hash = '#/home'; });
 
-// "À suivre": next episode to watch for each followed series. Rendered inside the Séries page.
+const UPNEXT_GROUPS = [
+  ['new', '🆕', 'Nouveaux épisodes', 'Sortis depuis votre dernier visionnage'],
+  ['resume', '▶', 'À reprendre', 'Épisodes en retard, sortis avant votre dernier visionnage'],
+  ['soon', '📅', 'Bientôt', 'Séries à jour avec un prochain épisode annoncé'],
+  ['pause', '⏸', 'En pause', 'Retard sur des séries pas regardées depuis longtemps'],
+];
+let _upPauseOpen = false; // groupe « En pause » replié par défaut
+// « Prochains épisodes » : trois groupes (nouveaux épisodes / à reprendre / bientôt) pour les séries suivies, non arrêtées,
+// commencées (ou épinglées « en cours »). Rendu dans la page Séries.
 async function renderUpnext(el) {
   buildModel();
-  if (!hasKey()) { el.innerHTML = needKeyHtml('« À suivre » a besoin des données TMDB pour connaître les épisodes disponibles.'); return; }
-  el.innerHTML = `<div class="home-head" style="margin-bottom:14px"><span class="sub" id="upSub">Prochain épisode à regarder pour vos séries suivies</span>
+  if (!hasKey()) { el.innerHTML = needKeyHtml('« Prochains épisodes » a besoin des données TMDB pour connaître les épisodes disponibles.'); return; }
+  el.innerHTML = `<div class="home-head" style="margin-bottom:14px"><span class="sub" id="upSub">Prochain épisode de vos séries en cours</span>
     <div class="spacer"></div><button class="btn sm ghost" id="refreshUp">Actualiser</button></div>
     <div id="upList"><div class="loading">Analyse de vos séries…</div></div>`;
-  el.querySelector('#refreshUp').onclick = () => render();
 
-  const followed = Array.from(MODEL.shows.values()).filter(s => s.followed && !s.archived);
+  const candidates = Array.from(MODEL.shows.values()).filter(s => s.followed && !s.archived && (s.seenKeys.size > 0 || isPinnedWatching(s)));
   const listEl = el.querySelector('#upList');
-  const results = [];
-  let done = 0;
-  const queue = followed.slice();
   const setSub = (txt) => { const s = el.querySelector('#upSub'); if (s) s.textContent = txt; };
-  const worker = async () => {
-    while (queue.length) {
-      const sh = queue.shift();
-      done++;
-      try {
-        const next = await computeNextEpisode(sh);
-        if (next) results.push({ sh, ...next });
-      } catch {}
-      setSub(`Analyse ${done}/${followed.length}…`);
-    }
-  };
-  await Promise.all(Array.from({ length: 6 }, worker));
-  setSub(`${results.length} série(s) à continuer`);
+  const entries = []; // { sh, info, group }
+  const silentSet = new Set(); // séries à jour sans date annoncée
 
-  results.sort((a, b) => (a.air || '9999').localeCompare(b.air || '9999'));
-  if (!results.length) { listEl.innerHTML = `<div class="empty"><div class="big">🎉</div>Vous êtes à jour partout !</div>`; return; }
-  listEl.innerHTML = results.map(r => `
-    <div class="upnext-row" data-key="${esc(r.sh.key)}">
-      <div class="poster">${posterHtml(r.sh, r.poster)}</div>
+  const collect = async (force) => {
+    entries.length = 0; silentSet.clear();
+    let done = 0;
+    const queue = candidates.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const sh = queue.shift();
+        let info = null;
+        try { info = await nextEpisodeInfo(sh, false, force); } catch {}
+        done++;
+        if (info) {
+          const g = upnextGroup(sh, info);
+          if (g === 'uptodate') { if (!info.ended && !info.unknown) silentSet.add(sh.key); } else entries.push({ sh, info, group: g });
+        }
+        if (done % 5 === 0 || done === candidates.length) setSub(`Analyse ${done}/${candidates.length}…`);
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+  };
+
+  const rowHtml = (r) => {
+    const { sh, info, group } = r;
+    const e = group === 'soon' ? info.soon : info.next;
+    const hasEp = e.s != null;
+    const spoil = antiSpoiler() && e.name && !(hasEp && isSeen(sh, e.s, e.n));
+    const title = hasEp ? (e.name || 'Épisode ' + epDisp(sh, e.s, e.n).n) : '';
+    let when;
+    if (group === 'soon') {
+      const d = daysFromToday(e.air);
+      when = d <= 1 ? relDay(e.air) : `${relDay(e.air)} · ${inDays(e.air)}`;
+      when = '📅 ' + when;
+    } else if (info.rewatch) when = '🔁 À revoir';
+    else when = e.air ? `${group === 'new' ? '🆕 ' : ''}Sorti ${relDay(e.air)}` : 'Disponible';
+    const left = group !== 'soon' && info.remaining > 0 ? ` · ${info.remaining} restant${info.remaining > 1 ? 's' : ''}` : '';
+    return `<div class="upnext-row" data-key="${esc(sh.key)}">
+      <div class="poster">${posterHtml(sh, info.poster)}</div>
       <div class="info">
-        <div class="sname">${esc(r.sh.name)}</div>
-        <div class="ename">${epSE(r.sh, r.season, r.n)} — ${esc(r.name || '')}</div>
-        <div class="sub" style="font-size:12px">${r.air ? esc(r.air) : ''} · ${r.remaining} épisode(s) restant(s)</div>
+        <div class="sname">${esc(displayName(sh))}</div>
+        ${hasEp ? `<div class="ename"><b>${epSE(sh, e.s, e.n)}</b> · <span class="${spoil ? 'spoil-name' : ''}">${esc(title)}</span></div>` : ''}
+        <div class="when">${esc(when + left)}</div>
       </div>
-      <button class="btn primary" data-mark>✓ Vu</button>
-      <button class="btn" data-open>Ouvrir</button>
-    </div>`).join('');
-  listEl.querySelectorAll('.upnext-row').forEach(row => {
-    const r = results.find(x => x.sh.key === row.dataset.key);
-    row.querySelector('[data-open]').onclick = () => openShow(r.sh.key);
-    row.querySelector('[data-mark]').onclick = () => { toggleSeen(r.sh, r.season, r.n, true); toast('Marqué vu'); render(); };
-  });
+      ${group !== 'soon' ? `<button class="btn sm ghost up-mark" data-mark title="${info.rewatch ? 'Compter un revisionnage' : 'Marquer comme vu'}">${info.rewatch ? '🔁 Revu' : '✓ Vu'}</button>` : ''}
+    </div>`;
+  };
+  const sortGroup = (g, a, b) => {
+    if (g === 'new') return (b.info.next.air || '').localeCompare(a.info.next.air || '');
+    if (g === 'resume' || g === 'pause') return (b.sh.lastSeenAt || '').localeCompare(a.sh.lastSeenAt || '');
+    return (a.info.soon.air || '').localeCompare(b.info.soon.air || '');
+  };
+  const paint = () => {
+    const n = entries.length, silent = silentSet.size;
+    setSub(n ? `${n} série${n > 1 ? 's' : ''} avec un épisode à regarder` : 'Prochain épisode de vos séries en cours');
+    if (!n && !silent) { listEl.innerHTML = `<div class="empty"><div class="big">🎉</div>Rien à regarder pour l’instant.<br><small>Commencez une série ou épinglez-en une pour la voir ici.</small></div>`; return; }
+    listEl.innerHTML = UPNEXT_GROUPS.map(([g, icon, title, hint]) => {
+      const rows = entries.filter(r => r.group === g).sort((a, b) => sortGroup(g, a, b));
+      if (!rows.length) return '';
+      return g === 'pause'
+        ? `<section class="up-group up-pause"><button type="button" class="up-pause-head" aria-expanded="${_upPauseOpen}"><h2>${icon} ${title} <span class="sec-count">${rows.length}</span></h2><span class="caret">${_upPauseOpen ? '▾' : '▸'}</span></button>
+        <div class="up-pause-body"${_upPauseOpen ? '' : ' hidden'}>${rows.map(rowHtml).join('')}</div></section>`
+        : `<section class="up-group"><div class="home-head"><h2>${icon} ${title} <span class="sec-count">${rows.length}</span></h2>
+        <button class="sec-info" title="${esc(hint)}" aria-label="À propos de ce groupe" data-hint="${esc(hint)}">ℹ️</button></div>
+        ${rows.map(rowHtml).join('')}</section>`;
+    }).join('') + (n ? '' : `<div class="empty"><div class="big">🎉</div>Vous êtes à jour !</div>`) +
+      (silent ? `<p class="up-foot">${silent} série${silent > 1 ? 's' : ''} à jour sans date annoncée</p>` : '');
+    listEl.querySelectorAll('.upnext-row').forEach(row => {
+      const r = entries.find(x => x.sh.key === row.dataset.key);
+      row.onclick = () => {
+        const e = r.group === 'soon' ? r.info.soon : r.info.next;
+        if (e && e.s != null) openEpisode(r.sh.key, e.s, e.n); else openShow(r.sh.key);
+      };
+      const b = row.querySelector('[data-mark]');
+      if (b) b.onclick = (ev) => { ev.stopPropagation(); markNext(r); };
+    });
+    listEl.querySelectorAll('.sec-info').forEach(b => b.onclick = () => toast(b.dataset.hint));
+    const ph = listEl.querySelector('.up-pause-head');
+    if (ph) ph.onclick = () => { _upPauseOpen = !_upPauseOpen; paint(); };
+  };
+  // Recalcule UNE série après un changement, puis redessine (les listes d'épisodes sont en cache : instantané).
+  const refreshOne = async (r) => {
+    let info = null;
+    try { info = await nextEpisodeInfo(r.sh); } catch {}
+    const i = entries.indexOf(r);
+    const g = info ? upnextGroup(r.sh, info) : 'uptodate';
+    if (i >= 0) entries.splice(i, 1);
+    silentSet.delete(r.sh.key);
+    if (g === 'uptodate') { if (info && !info.ended && !info.unknown) silentSet.add(r.sh.key); } else entries.push({ sh: r.sh, info, group: g });
+    paint();
+  };
+  const markNext = async (r) => {
+    const sh = r.sh, e = r.info.next;
+    if (!e || r._busy) return; // 2e tap pendant le traitement ignoré
+    r._busy = true;
+    try {
+      const prevLast = sh.lastSeenAt;
+      let undo;
+      if (r.info.rewatch) {
+        const prev = rewatchOf(sh, e.s, e.n);
+        setRewatch(sh, e.s, e.n, prev + 1);
+        undo = () => setRewatch(sh, e.s, e.n, prev);
+      } else {
+        toggleSeen(sh, e.s, e.n, true);
+        const a = userState.seenAdd && userState.seenAdd[epKey(sh.key, e.s, e.n)];
+        sh.lastSeenAt = maxDateStr(sh.lastSeenAt, a && a.at);
+        undo = () => { toggleSeen(sh, e.s, e.n, false); sh.lastSeenAt = prevLast; };
+      }
+      updateSyncStatus();
+      toastUndo(`${epSE(sh, e.s, e.n)} ${r.info.rewatch ? 'revu' : 'vu'}`, async () => { undo(); updateSyncStatus(); await refreshOne(entries.find(x => x.sh === sh) || { sh }); });
+      await refreshOne(r);
+    } finally { r._busy = false; }
+  };
+  // « Actualiser » : recalcul complet ; les séries en cours de diffusion dont la fiche TMDB a plus d'un jour sont relues.
+  el.querySelector('#refreshUp').onclick = async () => {
+    listEl.innerHTML = '<div class="loading">Actualisation…</div>';
+    const running = candidates.filter(s => { const m = metaFor(s); return m && m.status === 'Returning Series' && Date.now() - (m.fetchedAt || 0) > MS_DAY; });
+    let i = 0;
+    const w = async () => { while (i < running.length) { const sh = running[i++]; const id = overrideShowTmdb(sh) || tmdbCache.map[sh.tvdbId]; if (id) { try { await getShowMeta(id, true); } catch {} } } };
+    await Promise.all(Array.from({ length: 6 }, w));
+    _nextInfo.clear();
+    await collect(true); paint(); // true : relit aussi la saison utile des séries en cours
+  };
+
+  await collect();
+  if (!el.isConnected) return;
+  paint();
 }
 
 //////////////////////// Titres similaires (À propos) ////////////////////////
@@ -3622,7 +4043,7 @@ function ownedState(kind, key) {
   if (kind === 'tv') {
     buildModel();
     const sh = MODEL.shows.get(key);
-    if (!sh || !sh.seenKeys.size) return { cls: 'st-towatch', txt: '🕒 À voir' };
+    if (!sh || !sh.seenKeys.size) return { cls: 'st-towatch', txt: '🕒 À voir plus tard' };
     return isShowComplete(sh) ? { cls: 'st-seen', txt: '✓ Vue' } : { cls: 'st-watching', txt: '▶ En cours' };
   }
   const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === key);
@@ -4175,28 +4596,6 @@ route('person', async (el, rest) => {
   } catch { box.innerHTML = fallback(`Impossible de charger la fiche de ${esc(name)}.`); }
 });
 
-async function computeNextEpisode(sh) {
-  if (!sh.tvdbId) return null;
-  const tmdbId = await resolveTmdbId(sh.tvdbId);
-  if (!tmdbId) return null;
-  const meta = await getShowMeta(tmdbId);
-  const today = new Date();
-  let remaining = 0, next = null;
-  for (const s of meta.seasons) {
-    const eps = await getSeasonEpisodes(tmdbId, s.n);
-    for (const e of eps) {
-      const aired = e.air ? new Date(e.air) <= today : false;
-      if (!isSeen(sh, s.n, e.n) && aired) {
-        remaining++;
-        if (!next) next = { season: s.n, n: e.n, name: e.name, air: e.air, poster: meta.poster };
-      }
-    }
-  }
-  if (!next) return null;
-  next.remaining = remaining;
-  return next;
-}
-
 //////////////////////// Profil (hub) ////////////////////////
 route('profile', async (el) => {
   document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // Mon compte : pas de bannière de rappel
@@ -4212,7 +4611,7 @@ route('profile', async (el) => {
   const favSection = (title, icon, count, gridId, inner) => `
     <div class="panel">
       <h3>${icon} ${title} <span class="count" style="color:var(--muted);font-weight:400">· ${count}</span></h3>
-      ${count ? `<div class="grid" id="${gridId}">${inner}</div>` : `<p class="hint" style="color:var(--muted)">Aucun favori pour l'instant. Ouvrez une œuvre puis touchez « Favori ».</p>`}
+      ${count ? `<div class="grid" id="${gridId}">${inner}</div>` : `<p class="hint" style="color:var(--muted)">Aucun favori pour l'instant. Ouvrez une œuvre puis touchez ♡ « Ajouter aux favoris ».</p>`}
     </div>`;
   el.innerHTML = `
     ${backBtn('#/home')}
@@ -4504,7 +4903,7 @@ route('settings', async (el) => {
 
     <div class="panel">
       <h3>Synchronisation</h3>
-      <p class="hint" style="color:var(--muted)">Pré-charge les affiches et épisodes de vos séries et les affiches de vos films (recommandé pour « À suivre », le temps de visionnage exact et les affiches manquantes). ${Object.keys(tmdbCache.shows).length} série(s) et ${Object.keys(tmdbCache.movies || {}).length} film(s) en cache.</p>
+      <p class="hint" style="color:var(--muted)">Pré-charge les affiches et épisodes de vos séries et les affiches de vos films (recommandé pour « Prochains épisodes », le temps de visionnage exact et les affiches manquantes). ${Object.keys(tmdbCache.shows).length} série(s) et ${Object.keys(tmdbCache.movies || {}).length} film(s) en cache.</p>
       <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="syncAll">Synchroniser toutes mes œuvres</button><span id="syncProg" class="sub" style="align-self:center"></span></div>
     </div>
 
@@ -4541,9 +4940,13 @@ route('settings', async (el) => {
   el.querySelector('#saveKey').onclick = () => { userState.tmdbKey = el.querySelector('#tmdbKey').value.trim(); scheduleSaveState(); updateSyncStatus(); toast('Clé enregistrée'); };
   el.querySelector('#testKey').onclick = async () => {
     const st = el.querySelector('#keyStatus'); st.textContent = 'Test…';
+    const prevKey = userState.tmdbKey; // une clé invalide n'est pas gardée
     userState.tmdbKey = el.querySelector('#tmdbKey').value.trim();
-    try { await tmdbFetch('/configuration'); st.textContent = '✅ Clé valide'; scheduleSaveState(); }
-    catch { st.textContent = '❌ Clé invalide'; }
+    try { await tmdbFetch('/configuration'); st.textContent = '✅ Clé valide'; scheduleSaveState(); updateSyncStatus(); }
+    catch (e) {
+      userState.tmdbKey = prevKey;
+      st.textContent = /TMDB 40[13]/.test(String(e && e.message)) ? '❌ Clé invalide (non enregistrée)' : '⚠️ Test impossible (réseau ?) — clé non enregistrée';
+    }
   };
   el.querySelector('#syncAll').onclick = () => syncEverything(el.querySelector('#syncProg'));
   el.querySelector('#exportBtn').onclick = () => { exportData(); render(); };
@@ -4811,7 +5214,7 @@ function sbShowHandoff() {
       <li>Ouvrez l'app TV Time depuis l'écran d'accueil.</li>
       <li>Avatar en haut à droite → Sauvegarde en ligne → « Le lien ne m'a pas connecté » → collez le code → « Me connecter ».</li>
     </ol>
-    <input class="input" id="sbHandoffCode" readonly value="${esc(code)}" style="width:100%;font-size:12px">
+    <input class="input" id="sbHandoffCode" readonly value="${esc(code)}" style="width:100%">
     <p class="hint" id="sbHandoffMsg" style="color:var(--muted)"></p>
     <div class="modal-actions" style="margin-top:12px;display:flex;gap:10px;justify-content:flex-end">
       <button class="btn ghost" data-close>J'utilise Safari</button>
@@ -5428,6 +5831,14 @@ async function sbFollowByPseudo(pseudo) {
 }
 
 // Bouton « Mon compte » (avatar) en haut à droite des 4 onglets : mène au profil, aux réglages et à la connexion.
+// Loupe de l'en-tête (Séries / Films) : ouvre la recherche unifiée. À poser à côté de acctBtn().
+function searchBtn(kind) {
+  return `<button type="button" class="search-btn" data-search="${kind}" aria-label="Rechercher">🔍</button>`;
+}
+function wireSearchBtn(el) {
+  const b = el.querySelector('[data-search]');
+  if (b) b.onclick = () => openUnifiedSearch(b.dataset.search);
+}
 function acctBtn() {
   let c = null;
   try { c = JSON.parse(localStorage.getItem('tvtime-acct') || 'null'); } catch {}
@@ -6384,6 +6795,7 @@ route('custom', async (el) => {
   maybeWeeklyBackup();
   setTimeout(sbMaybePublish, 8000);
   setTimeout(refreshMovieMatches, 6000);
+  setTimeout(retryNullMatches, 20000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { maybeWeeklyBackup(); sbMaybePublish(); } });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
