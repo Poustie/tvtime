@@ -451,7 +451,8 @@ route('stats', async (el) => {
 
   // activity by year
   const byYear = {};
-  for (const d of MODEL.seenDates) { const y = (d || '').slice(0, 4); if (y) byYear[y] = (byYear[y] || 0) + 1; }
+  // Même calcul que le bloc « Par année » du haut (épisodes dédoublonnés, fausses dates TV Time ignorées).
+  for (const [y, b] of Object.entries(SD.byYear)) if (b.eps) byYear[y] = b.eps;
   const years = Object.keys(byYear).sort();
 
   // top shows
@@ -476,7 +477,7 @@ route('stats', async (el) => {
   for (const m of allMovies) { const r = movieScore(m); if (r >= 1 && r <= 5) movMyRatingCounts[r]++; }
   const myRatedMovies = Object.values(movMyRatingCounts).reduce((a, b) => a + b, 0);
   const movByYear = {};
-  for (const m of moviesWatched) { const y = (movieWatchedOf(m) || '').slice(0, 4); if (y) movByYear[y] = (movByYear[y] || 0) + 1; }
+  for (const [y, b] of Object.entries(SD.byYear)) if (b.movies) movByYear[y] = b.movies;
   const movYears = Object.keys(movByYear).sort();
 
   el.innerHTML = `

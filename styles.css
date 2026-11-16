@@ -479,6 +479,10 @@ html.amoled .bottom-nav { background: rgba(0,0,0,.94); }
 .settings-field .hint { color: var(--muted); font-size: max(11px, calc(12px * var(--fs, 1))); margin-top: 6px; line-height: 1.5; }
 
 .pill-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+/* Onglets Séries : toujours sur une ligne (défile si le texte est agrandi). */
+#seriesTabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+#seriesTabs::-webkit-scrollbar { display: none; }
+#seriesTabs .chip { flex: 0 0 auto; white-space: nowrap; }
 
 /* ---- Home sections ---- */
 .home-section { margin-bottom: 30px; }

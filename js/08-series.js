@@ -34,7 +34,7 @@ route('home', async (el) => {
     </div>
     <div class="pill-tabs" id="seriesTabs">
       <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">📺 Mes séries</span>
-      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">🔜 Prochains épisodes</span>
+      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">🔜 Prochains</span>
       <span class="chip ${seriesTab === 'calendrier' ? 'active' : ''}" data-stab="calendrier">📅 Calendrier</span>
     </div>
     <div id="seriesBody"></div>`;

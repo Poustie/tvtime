@@ -11,6 +11,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 66, date: '16 novembre 2026', title: 'Petites corrections', items: [
+    'Séries : les onglets « Mes séries », « Prochains » et « Calendrier » tiennent sur une seule ligne.',
+    'Statistiques : les totaux par année sont les mêmes d’un bloc à l’autre (épisodes comptés une seule fois, fausses dates de TV Time ignorées).',
+    'Explorer : « Animés de la saison » ne montre plus les séries sans fin (One Piece, Détective Conan…), seulement les vraies nouveautés de la saison.',
+  ] },
   { id: 65, date: '16 novembre 2026', title: 'Calendrier, statistiques, badges et plus', items: [
     'Séries : nouvel onglet « 📅 Calendrier » avec les sorties des 30 prochains jours (et des 7 derniers), jour par jour.',
     'Statistiques : bilan de l’année, temps passé par mois et par année (films compris), records (plus long marathon, série la plus revue…) et badges (100ᵉ série, 10 000ᵉ épisode…), aussi visibles dans Mon compte.',

@@ -246,6 +246,16 @@ function animeSeasonRange() {
   const now = new Date(), q = Math.floor(now.getMonth() / 3) * 3, iso = (d) => d.toISOString().slice(0, 10);
   return { from: iso(new Date(Date.UTC(now.getFullYear(), q, 1))), to: iso(new Date(now.getTime() + 30 * MS_DAY)) };
 }
+// Animé « de la saison » : un épisode sort pendant la période (début du trimestre → dans 1 mois), et ce n'est pas une série
+// sans fin (One Piece, Détective Conan, Doraemon, Pokémon… : plus de 100 épisodes dans la saison ou numéros au-delà de 100).
+function isSeasonalAnime(d) {
+  if (!d) return true;
+  const r = animeSeasonRange(), nx = d.next_episode_to_air, la = d.last_episode_to_air;
+  const ep = (nx && nx.air_date && nx.air_date <= r.to) ? nx : (la && la.air_date && la.air_date >= r.from) ? la : null;
+  if (!ep) return false;
+  const se = (d.seasons || []).find(x => x.season_number === ep.season_number);
+  return ep.episode_number <= 100 && !(se && se.episode_count > 100);
+}
 const EXPLORE_ROWS = [
   { id: 'trTv', title: '🔥 Séries du moment', ttl: 0.5, load: async () => slimHits(await tmdbFetch('/trending/tv/week'), 'tv') },
   { id: 'trMovie', title: '🎬 Films du moment', ttl: 0.5, load: async () => slimHits(await tmdbFetch('/trending/movie/week'), 'movie') },
@@ -259,9 +269,14 @@ const EXPLORE_ROWS = [
       .sort((a, b) => a.release_date.localeCompare(b.release_date)).slice(0, 20)
       .map(h => ({ ...slimHit(h, 'movie'), sub: fmtFull(h.release_date) }));
   } },
-  { id: 'animeSeason', title: '🌸 Animés de la saison', ttl: 1, key: () => animeSeasonRange().from, load: async () => {
+  { id: 'animeSeason', title: '🌸 Animés de la saison', ttl: 1, key: () => animeSeasonRange().from + ':v3', load: async () => {
     const r = animeSeasonRange();
-    return slimHits(await tmdbFetch(`/discover/tv?with_genres=16&with_original_language=ja&air_date.gte=${r.from}&air_date.lte=${r.to}&sort_by=popularity.desc`), 'tv');
+    const q = `/discover/tv?with_genres=16&with_original_language=ja&air_date.gte=${r.from}&air_date.lte=${r.to}&sort_by=popularity.desc`;
+    const pages = await Promise.all([1, 2].map(p => tmdbFetch(q + '&page=' + p).catch(() => ({ results: [] }))));
+    const seen = new Set();
+    const cand = pages.flatMap(pg => pg.results || []).filter(h => h.poster_path && !seen.has(h.id) && seen.add(h.id)).slice(0, 30);
+    const keep = await Promise.all(cand.map(h => tmdbFetch('/tv/' + h.id).then(isSeasonalAnime, () => true)));
+    return cand.filter((h, i) => keep[i]).slice(0, 20).map(h => slimHit(h, 'tv'));
   } },
   { id: 'allTv', title: '🏆 Séries les plus vues de tous les temps', ttl: 7, load: async () => slimHits(await tmdbFetch('/discover/tv?sort_by=vote_count.desc'), 'tv') },
   { id: 'allMovie', title: '🏆 Films les plus vus de tous les temps', ttl: 7, load: async () => slimHits(await tmdbFetch('/discover/movie?sort_by=vote_count.desc'), 'movie') },

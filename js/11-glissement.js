@@ -128,7 +128,7 @@ document.addEventListener('touchstart', (e) => {
   _sw = null;
   if (_swBusy || e.touches.length !== 1) return;
   const t = e.target;
-  if (t.closest && t.closest('.cast-list, .exp-row, .genre-chips, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
+  if (t.closest && t.closest('#seriesTabs, .cast-list, .exp-row, .genre-chips, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
   if (document.getElementById('modalRoot') && document.getElementById('modalRoot').children.length) return;
   const nb = swipeNeighbors(); if (!nb) return;
   const x = e.touches[0].clientX, y = e.touches[0].clientY;
