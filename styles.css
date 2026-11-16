@@ -93,9 +93,9 @@ main {
 
 /* Basic category slide transition */
 .page-anim { will-change: transform; }
-.page-snap { position: fixed; left: 0; right: 0; top: 0; height: 100dvh; z-index: 30; overflow: hidden; pointer-events: none; will-change: transform; }
+.page-snap { position: fixed; left: 0; right: 0; top: 0; height: 100vh; height: 100dvh; z-index: 30; overflow: hidden; pointer-events: none; will-change: transform; }
 /* Neighbouring page prepared for swiping: hidden until a swipe shows it */
-.app-pane { position: fixed; left: 0; right: 0; top: 0; z-index: 30; visibility: hidden; pointer-events: none; will-change: transform; }
+.app-pane { position: fixed; left: 0; right: 0; top: 0; height: 100vh; height: 100dvh; overflow: hidden; z-index: 30; visibility: hidden; pointer-events: none; will-change: transform; contain: paint; }
 .page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-head h1 { font-size: calc(24px * var(--fs, 1)); margin: 0; }
 .page-head .sub { color: var(--muted); font-size: calc(13px * var(--fs, 1)); }
@@ -931,3 +931,35 @@ a.badge-card .muted { color: var(--muted); display: block; margin-top: 8px; font
 .reco-new { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--on-accent, #10141a); font-size: max(11px, calc(11px * var(--fs, 1))); font-weight: 700; vertical-align: middle; }
 .reco-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .reco-btns .btn { min-height: 44px; }
+
+/* ===== Lot 8-A : navigation / glissement (dev A uniquement) ===== */
+/* La page qui glisse dépasse de l'écran : sans ceci, le navigateur mobile « dézoome » la page pendant le geste (largeur de mise en page agrandie). */
+html, body { overflow-x: clip; }
+/* En-tête ancré pendant le glissement : l'avatar, la loupe et les titres sont des copies fixes ; les vrais sont masqués. */
+.sw-ov { position: fixed; inset: 0; z-index: 31; pointer-events: none; }
+.sw-ov > * { will-change: opacity; pointer-events: none; }
+.sw-anchor .page-head h1, .sw-anchor .page-head .acct-btn, .sw-anchor .page-head .search-btn { visibility: hidden; }
+
+/* ===== Lot 8-B : fenêtres de tri / genres, onglets Bibliothèque (dev B uniquement) ===== */
+.pick-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.pick-bar > span { display: inline-flex; align-items: center; }
+.pick-bar > .sub { margin-left: 4px; }
+.pick-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 8px 14px; border-radius: 999px;
+  background: var(--bg3); color: var(--text); border: 1px solid var(--line); font: inherit; font-size: calc(14px * var(--fs, 1)); cursor: pointer;
+}
+.pick-btn.on { border-color: var(--accent); color: var(--accent-ink, var(--accent)); font-weight: 700; }
+.pick-btn:active { background: var(--bg2); }
+.pick-arrow { font-size: calc(12px * var(--fs, 1)); opacity: .7; }
+#movSort { display: inline-flex; }
+.genre-head { flex-wrap: wrap; }
+.genre-head #expGenreBtnBox { flex-basis: 100%; }
+.genre-res-head + .pick-bar { margin-bottom: 12px; }
+/* Fenêtre « Genres » : liste qui défile, boutons Effacer / OK toujours visibles. */
+.sheet-scroll { max-height: min(52vh, 460px); overflow-y: auto; margin-bottom: 4px; }
+.sheet-item .sheet-n { margin-left: auto; padding-left: 10px; flex: none; color: var(--muted); }
+.sheet-bd .modal .row { gap: 10px; }
+.sheet-bd .modal .row .btn { flex: 1; }
+/* Onglets de la Bibliothèque : retour à la ligne propre, jamais de défilement sur le côté. */
+#libTabs { gap: 6px; }
+#libTabs .chip { white-space: nowrap; padding: 6px 10px; }

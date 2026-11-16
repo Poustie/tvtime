@@ -204,7 +204,7 @@ function toggleSeen(sh, season, number, seen) {
     const firstEver = sh.seenKeys.size === 0; // vraie 1re coche de la série
     sh.seenKeys.add(k);
     sh.followed = true; // marquer un épisode vu suit automatiquement la série
-    if (firstEver && userState.watchlist && userState.watchlist[sh.key]) delete userState.watchlist[sh.key]; // plus « à voir plus tard » : on la regarde
+    if (firstEver && userState.watchlist && sh.key in userState.watchlist) delete userState.watchlist[sh.key]; // elle est commencée : le drapeau « ajoutée / retirée » ne sert plus
     unarchiveOnActivity(sh);
     const hadRemove = !!userState.seenRemove[k];
     if (hadRemove) delete userState.seenRemove[k];
@@ -439,10 +439,23 @@ function showRewatchHistoryHtml(sh) {
   const head = days.slice(0, 5).map(line).join('');
   const more = days.length > 5 ? `<details><summary class="muted" style="cursor:pointer">Voir les ${days.length - 5} autres jours</summary>${days.slice(5).map(line).join('')}</details>` : '';
   return head + more;
-}function toggleWatchlist(sh) {
-  if (userState.watchlist[sh.key]) delete userState.watchlist[sh.key];
-  else userState.watchlist[sh.key] = true;
-  scheduleSaveState();
+}// « Mes séries » pour une série jamais commencée : ajoute (suivie) ou retire. Garde le drapeau interne userState.watchlist
+// (true = ajoutée, false = retirée même si l'export TV Time la disait suivie, absent = état de l'export). Renvoie true si ajoutée.
+function toggleMyShow(sh) {
+  const adding = !sh.followed;
+  if (!adding && sh.custom && !confirm('Retirer « ' + displayName(sh) + ' » de vos séries ? Pour la remettre, il faudra la rechercher dans Explorer.')) return null;
+  if (!userState.watchlist) userState.watchlist = {};
+  if (!adding && sh.custom) { removeCustomShow(sh.key); delete userState.watchlist[sh.key]; } // série ajoutée à la main : on la retire vraiment
+  else userState.watchlist[sh.key] = adding;
+  MODEL = null; scheduleSaveState();
+  return adding;
+}
+// Après « Retirer de mes séries » d'une série ajoutée à la main, sa fiche n'existe plus : retour à la page Séries.
+function afterMyShowToggle(sh, adding) {
+  if (adding === null) return; // retrait annulé
+  toast(adding ? 'Ajoutée à mes séries' : 'Retirée de mes séries');
+  if (!adding && sh.custom && location.hash.startsWith('#/show/')) { replaceRoute('#/home'); return; }
+  render();
 }
 function toggleArchived(sh) {
   sh.archived = !sh.archived;

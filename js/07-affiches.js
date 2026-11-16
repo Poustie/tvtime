@@ -245,7 +245,7 @@ function openAddCatalog(kind) {
   tmdbSearchModal({
     title: kind === 'tv' ? 'Ajouter une série' : 'Ajouter un film',
     hint: kind === 'tv'
-      ? 'Recherchez une série à regarder plus tard : elle sera ajoutée à « À voir plus tard ».'
+      ? 'Recherchez une série à regarder plus tard : elle sera ajoutée à vos séries.'
       : 'Recherchez un film à regarder plus tard : il apparaîtra dans « À voir ».',
     kind,
     initial: '',
@@ -268,11 +268,11 @@ function addCustomShow(hit) {
   const cs = { key: 'tmdb:' + hit.id, tmdbId: hit.id, name: hit.name || hit.title || '', poster: hit.poster_path || null, addedAt: new Date().toISOString() };
   userState.customShows.push(cs);
   if (!userState.watchlist) userState.watchlist = {};
-  userState.watchlist[cs.key] = true; // ajoutée = « À voir plus tard »
+  userState.watchlist[cs.key] = true; // ajoutée à mes séries (jamais commencée)
   MODEL = null;
   scheduleSaveState();
   getShowMeta(hit.id, true).catch(() => {}); // prefetch meta (poster, seasons, episodes)
-  toast('Ajoutée à « À voir plus tard »');
+  toast('Ajoutée à mes séries');
   return cs.key;
 }
 function removeCustomShow(key) {
@@ -322,7 +322,7 @@ function openUnifiedSearch(kind) {
   const ownedMovies = (DATA.movies || []).concat(userState.customMovies || []);
   showModal(`
     <h2>${kind === 'tv' ? '🔍 Rechercher une série' : '🔍 Rechercher un film'}</h2>
-    <p class="hint" style="color:var(--muted)">Retrouvez ${kind === 'tv' ? 'une série' : 'un film'} de votre bibliothèque ou ajoutez-en ${kind === 'tv' ? 'une nouvelle (elle sera ajoutée à « À voir plus tard »)' : 'un nouveau (il ira dans « À voir »)'}.</p>
+    <p class="hint" style="color:var(--muted)">Retrouvez ${kind === 'tv' ? 'une série' : 'un film'} de votre bibliothèque ou ajoutez-en ${kind === 'tv' ? 'une nouvelle (elle sera ajoutée à vos séries)' : 'un nouveau (il ira dans « À voir »)'}.</p>
     <div class="modal-fields" style="flex-direction:row;gap:8px">
       <input class="input" id="uQ" style="flex:1" placeholder="Titre à rechercher…">
       <button class="btn primary" id="uGo">Rechercher</button>

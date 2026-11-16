@@ -60,23 +60,6 @@ const LIB_SORTERS_MOVIE = {
   best: (a, b) => byScore(movieScore(a), movieScore(b), true) || movieSortName(a).localeCompare(movieSortName(b)),
   worst: (a, b) => byScore(movieScore(a), movieScore(b), false) || movieSortName(a).localeCompare(movieSortName(b)),
 };
-// Barre de tri : « Alphabétique », « Ajout récent », « Ma réaction » ; retoucher le tri actif l'inverse.
-function sortChipsHtml(cur, hideScore, withShowSorts) {
-  const alpha = (cur === 'az' || cur === 'za');
-  const recent = (cur === 'recent' || cur === 'old');
-  const score = (cur === 'best' || cur === 'worst');
-  return `<span class="chip ${alpha ? 'active' : ''}" data-sort="alpha">Alphabétique${alpha ? (cur === 'za' ? ' ↑' : ' ↓') : ''}</span>` +
-         `<span class="chip ${recent ? 'active' : ''}" data-sort="recent">Ajout récent${recent ? (cur === 'old' ? ' ↑' : ' ↓') : ''}</span>` +
-         (hideScore ? '' : `<span class="chip ${score ? 'active' : ''}" data-sort="score" title="Mieux notés d'abord ; retoucher pour l'inverse">Réaction${score ? (cur === 'worst' ? ' ↑' : ' ↓') : ''}</span>`) +
-         (withShowSorts ? `<span class="chip ${cur === 'lastseen' ? 'active' : ''}" data-sort="lastseen">Dernier épisode vu</span><span class="chip ${cur === 'nextair' ? 'active' : ''}" data-sort="nextair">Prochaine sortie</span>` : '');
-}
-function nextSort(cur, which) {
-  if (which === 'alpha') return cur === 'az' ? 'za' : 'az';
-  if (which === 'score') return cur === 'best' ? 'worst' : 'best';
-  if (which === 'lastseen' || which === 'nextair') return which; // tris à sens unique
-  return cur === 'recent' ? 'old' : 'recent';
-}
-
 let moviesTab = 'towatch';
 let moviesSort = 'az';
 route('movies', async (el) => {
@@ -93,7 +76,7 @@ route('movies', async (el) => {
       <h1>Films</h1>${searchBtn('movie')}${acctBtn()}
       <span class="sub">${toWatch.length} à voir · ${watched.length} vus</span>
       <div class="spacer"></div>
-      <div class="sort-chips" id="movSort"></div>
+      <div id="movSort"></div>
     </div>
     <div class="pill-tabs" id="movTabs">
       <span class="chip ${moviesTab === 'towatch' ? 'active' : ''}" data-mtab="towatch">🎬 À voir (${toWatch.length})</span>
@@ -103,8 +86,8 @@ route('movies', async (el) => {
 
   wireSearchBtn(el);
   const movSort = el.querySelector('#movSort');
-  movSort.innerHTML = sortChipsHtml(sortNow(), moviesTab === 'towatch');
-  movSort.querySelectorAll('.chip').forEach(c => c.onclick = () => { moviesSort = nextSort(sortNow(), c.dataset.sort); render(); });
+  movSort.innerHTML = sortBtnHtml('movSortBtn', sortNow());
+  movSort.querySelector('button').onclick = () => openSortSheet(sortOptionList(moviesTab === 'towatch', false), sortNow(), (k) => { moviesSort = k; render(); });
 
   el.querySelectorAll('#movTabs .chip').forEach(c => c.onclick = () => { moviesTab = c.dataset.mtab; render(); });
 

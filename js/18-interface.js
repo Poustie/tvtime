@@ -9,6 +9,37 @@ function showModal(html, onReady) {
   if (onReady) onReady(root);
 }
 function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
+// ---- Bouton / geste « retour » du téléphone avec une fenêtre ouverte : il ferme la fenêtre et on reste sur la page ----
+// À l'ouverture d'une fenêtre on ajoute une entrée d'historique (même adresse, donc ni changement de page ni redessin) ;
+// « retour » la consomme (popstate) et ferme la fenêtre. Si on ferme la fenêtre nous-mêmes (croix, fond, action), l'entrée est
+// retirée par history.back() — sauf si la page a changé entre-temps (alors elle reste sous la nouvelle page et est sautée au retour).
+(function wireModalBack() {
+  const root = document.getElementById('modalRoot');
+  if (!root || !window.MutationObserver) return;
+  const open = () => root.children.length > 0;
+  let pushed = false, hashAtPush = '', ignorePop = 0, wantPush = false, settleT = null;
+  const push = () => {
+    if (ignorePop > 0) { wantPush = true; return; } // un history.back() est encore en route : on attend son popstate
+    try { history.pushState({ tvtModal: 1 }, ''); pushed = true; hashAtPush = location.hash; } catch { pushed = false; }
+  };
+  const settle = () => {
+    settleT = null;
+    if (open() || !pushed) return;
+    pushed = false;
+    if (location.hash === hashAtPush && history.state && history.state.tvtModal) { ignorePop++; history.back(); }
+  };
+  new MutationObserver(() => {
+    if (open()) { if (settleT) { clearTimeout(settleT); settleT = null; } if (!pushed) push(); }
+    else if (pushed && !settleT) settleT = setTimeout(settle, 0); // laisse une action de la fenêtre changer de page avant de décider
+  }).observe(root, { childList: true });
+  window.addEventListener('popstate', (ev) => {
+    if (ignorePop > 0) { ignorePop--; if (!ignorePop && wantPush) { wantPush = false; if (open()) push(); } return; }
+    if (open()) { pushed = false; root.innerHTML = ''; return; } // « retour » : on ferme la fenêtre, la page ne bouge pas
+    if (ev.state && ev.state.tvtModal) history.back(); // entrée laissée sous une page : on la saute
+  });
+  // Aucune fenêtre ne reste affichée après un changement de page.
+  window.addEventListener('hashchange', () => { if (open()) { pushed = false; root.innerHTML = ''; } });
+})();
 // Affiche en grand : clic sur l'affiche d'une fiche (série / film, y compris l'aperçu).
 function openPosterViewer(src) {
   closePosterViewer();

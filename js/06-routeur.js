@@ -9,7 +9,6 @@ function currentRoute() { return (location.hash || '#/library').slice(2); }
 const DETAIL_ROUTES = ['show', 'movie', 'episode', 'person', 'preview'];
 const navStack = [];
 let _navReplace = false;   // next navigation replaces the current page (episode → episode)
-let _pendingSlideDir = 0;  // slide animation to play on the next render (1 = from the right)
 function trackNav(hash, name) {
   if (_navReplace) { _navReplace = false; navStack[Math.max(0, navStack.length - 1)] = hash; return; }
   if (!DETAIL_ROUTES.includes(name)) { navStack.length = 0; navStack.push(hash); return; }
@@ -84,41 +83,14 @@ function backBtn(fallback) {
   return `<a class="btn ghost sm back-btn" href="${esc(fallback)}" data-back="${esc(fallback)}">← ${esc(backLabel(fallback))}</a>`;
 }
 
-// Basic slide transition when moving from one main category to another.
-let _lastTopRoute = null;
-function _makeSnapshot() {
-  const el = document.getElementById('app');
-  const sy = window.scrollY;
-  const snap = el.cloneNode(true);
-  snap.removeAttribute('id');
-  snap.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
-  snap.classList.add('page-snap');
-  snap.style.transform = `translate(0, ${-sy}px)`;
-  document.body.appendChild(snap);
-  return { snap, sy };
-}
-function _runSlide(el, snapObj, dir) {
-  const { snap, sy } = snapObj;
-  const from = dir > 0 ? '100%' : '-100%';   // new page enters from this side
-  const to = dir > 0 ? '-100%' : '100%';     // old page leaves to this side
-  const dur = 240;
-  el.classList.add('page-anim');
-  el.style.transition = 'none';
-  el.style.transform = `translateX(${from})`;
-  void el.offsetWidth;                        // flush the start position
-  el.style.transition = `transform ${dur}ms ease`;
-  el.style.transform = 'translateX(0)';
-  snap.style.transition = `transform ${dur}ms ease`;
-  snap.style.transform = `translate(${to}, ${-sy}px)`;
-  setTimeout(() => {
-    el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
-    snap.remove();
-  }, dur + 40);
-}
+// Changement de page (onglet du bas, lien…) : instantané, sans animation. Seul le glissement au doigt anime (11-glissement.js).
 let _lastRenderedHash = null;
+let _renderLater = null; // redessin demandé pendant un glissement (fait à la fin du geste)
 async function render() {
   // Même page redessinée (option cochée, réaction, vu…) : on reste à la même hauteur au lieu de remonter en haut.
   const _hashNow = location.hash || '#/home';
+  if (_hashNow === _lastRenderedHash && ((_sw && _sw.locked) || _swBusy)) { _renderLater = _hashNow; return; } // pas pendant un glissement
+  const _prevHash = _lastRenderedHash;
   const _keepY = _hashNow === _lastRenderedHash ? window.scrollY : null;
   _lastRenderedHash = _hashNow;
   document.querySelectorAll('.page-snap').forEach(n => n.remove()); // safety: never leave a frozen page behind
@@ -128,26 +100,22 @@ async function render() {
   // « Mon compte » (profil, bibliothèque, stats, listes, réglages…) n'est plus un onglet : il s'ouvre par l'avatar en haut à droite.
   const navName = name === 'preview' ? 'explore' : (name === 'friend' ? 'friends' : name);
   document.querySelectorAll('.bottom-nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navName));
-  // Direction of the slide, only between the four main categories.
-  const newTop = SWIPE_ROUTES.includes(name) ? name : null;
-  let dir = 0;
-  if (_lastTopRoute && newTop && _lastTopRoute !== newTop) {
-    dir = SWIPE_ROUTES.indexOf(newTop) > SWIPE_ROUTES.indexOf(_lastTopRoute) ? 1 : -1;
-  }
-  _lastTopRoute = newTop;
-  if (_pendingSlideDir) { dir = _pendingSlideDir; _pendingSlideDir = 0; }
   const el = document.getElementById('app');
   // Page already in place after a swipe: nothing to render (unless its data changed meanwhile).
   if (_suppressRenderHash && _suppressRenderHash === location.hash) {
     _suppressRenderHash = null;
     if (el._ver === _dataVer) { schedulePanes(); return; }
-    dir = 0;
   }
   _suppressRenderHash = null;
+  // Onglet du bas : la page voisine est déjà prête → échange immédiat (pas de « Chargement… », rien qui clignote).
+  if (_prevHash && _prevHash !== _hashNow && !_swBusy && SWIPE_ROUTES.includes(name) && SWIPE_ROUTES.includes(_prevHash.slice(2).split('/')[0])) {
+    const pane = _panes[_hashNow];
+    if (pane && pane.el._ver === _dataVer && el._ver === _dataVer) { _swapPane(_prevHash, _hashNow, pane); schedulePanes(); return; }
+  }
+  _anchorEnd();
   dropPane(location.hash || '#/home'); // never keep a hidden copy of the page being rendered
   for (const h in _panes) _panes[h].el.style.cssText = '';
-  el.style.transition = ''; el.style.transform = ''; el.classList.remove('page-anim');
-  const snapObj = dir !== 0 ? _makeSnapshot() : null;
+  el.style.transition = ''; el.style.transform = '';
   const fn = routes[name] || routes['library'];
   const ver = _dataVer;
   if (_keepY != null) el.style.minHeight = el.offsetHeight + 'px'; // la page ne rétrécit pas pendant le redessin
@@ -157,7 +125,6 @@ async function render() {
   const saved = scrollByHash[location.hash];
   el.style.minHeight = '';
   window.scrollTo(0, _keepY != null ? _keepY : (name !== 'show' && name !== 'movie' && name !== 'episode' && saved ? saved : 0));
-  if (snapObj) _runSlide(el, snapObj, dir);
   schedulePanes();
 }
 window.addEventListener('hashchange', render);

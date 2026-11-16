@@ -11,6 +11,13 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 67, date: '16 novembre 2026', title: 'Navigation plus fluide et tris plus simples', items: [
+    'Barre du bas : le changement de page est instantané, sans animation ni pages qui se superposent.',
+    'Glisser entre Séries, Films, Explorer et Amis : les deux pages restent collées, sans effet de zoom ; votre photo et la loupe restent en place et le titre se transforme en douceur.',
+    'Explorer, Bibliothèque et Films : le tri et les genres s’ouvrent dans une fenêtre à cocher (plus besoin de faire défiler sur le côté).',
+    'Bibliothèque : onglets En cours, Tout, Arrêtées, Favoris et Pas commencées. « À voir plus tard » est remplacé par « ＋ Ajouter à mes séries ».',
+    'Bouton retour du téléphone : il ferme la fenêtre ouverte (⋯ Plus, tri, réaction…) au lieu de quitter la page.',
+  ] },
   { id: 66, date: '16 novembre 2026', title: 'Petites corrections', items: [
     'Séries : les onglets « Mes séries », « Prochains » et « Calendrier » tiennent sur une seule ligne.',
     'Statistiques : les totaux par année sont les mêmes d’un bloc à l’autre (épisodes comptés une seule fois, fausses dates de TV Time ignorées).',

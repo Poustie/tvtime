@@ -8,9 +8,9 @@ function ownedState(kind, key) {
   if (kind === 'tv') {
     if (!MODEL) buildModel();
     const sh = MODEL.shows.get(key);
-    if (!sh) return { cls: 'st-towatch', txt: '🕒 À voir plus tard' };
+    if (!sh) return { cls: 'st-stale', txt: '📚 Dans ma bibliothèque' };
     if (sh.archived) return { cls: 'st-stopped', txt: '⏹ Arrêtée' };
-    if (!sh.seenKeys.size) return { cls: 'st-towatch', txt: '🕒 À voir plus tard' };
+    if (!sh.seenKeys.size) return sh.followed ? { cls: 'st-towatch', txt: '🆕 Pas commencée' } : { cls: 'st-stale', txt: '📚 Dans ma bibliothèque' };
     const cat = seriesCategory(sh);
     if (cat === 'finished') return { cls: 'st-seen', txt: '✓ Terminée' };
     if (cat === 'watching') return { cls: 'st-watching', txt: '▶ En cours' };
@@ -324,19 +324,39 @@ route('explore', async (el) => {
   };
   // Par genre : Séries / Films + un bouton par genre ; toucher un genre affiche ses titres en grille.
   const genresEl = el.querySelector('#expGenres');
-  const paintGenreChips = () => genresEl.querySelectorAll('[data-gid]').forEach(ch => {
-    const g = exploreGenre && exploreGenre.kind === exploreGenreKind ? exploreGenre : null;
-    ch.classList.toggle('active', !!g && (ch.dataset.gid === 'anime' ? g.anime : g.ids.includes(Number(ch.dataset.gid))));
-  });
+  let genreList = []; // genres TMDB du type affiché (pour la fenêtre « Genres »)
+  const curGenre = () => (exploreGenre && exploreGenre.kind === exploreGenreKind ? exploreGenre : null);
+  const genreCount = () => { const g = curGenre(); return g ? g.ids.length + (g.anime ? 1 : 0) : 0; };
+  // Met à jour le bouton « Genres (n) ».
+  const paintGenreChips = () => { const box = genresEl.querySelector('#expGenreBtnBox'); if (box) box.innerHTML = genreBtnHtml('expGenreBtn', genreCount()); wireGenreBtn(); };
+  const wireGenreBtn = () => { const b = genresEl.querySelector('#expGenreBtn'); if (b) b.onclick = openGenres; };
+  const openGenres = () => {
+    const kind = exploreGenreKind, g = curGenre();
+    const entries = [{ id: 'anime', label: 'Animé', ico: '🇯🇵' }, ...genreList.map(x => ({ id: String(x.id), label: x.name }))];
+    const selected = g ? [...(g.anime ? ['anime'] : []), ...g.ids.map(String)] : [];
+    openGenreSheet(entries, selected, (sel) => {
+      const first = !exploreGenre;
+      const ng = g || { kind, ids: [], names: {}, anime: false, sort: (exploreGenre && exploreGenre.sort) || 'pop' };
+      ng.anime = sel.includes('anime');
+      ng.ids = sel.filter(x => x !== 'anime').map(Number);
+      for (const x of genreList) if (ng.ids.includes(x.id)) ng.names[x.id] = x.name;
+      ng.low = false;
+      exploreGenre = (ng.ids.length || ng.anime) ? ng : null;
+      input.value = ''; exploreQuery = '';
+      paintGenreChips(); doSearch();
+      if (first && exploreGenre) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
   const drawGenres = async () => {
     const kind = exploreGenreKind;
     let list = [];
     try { list = await tmdbGenreList(kind); } catch {}
     if (kind !== exploreGenreKind) return;
+    genreList = list;
     genresEl.innerHTML = `<div class="genre-head"><span class="genre-title">🎭 Par genre</span>
-      <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">📺 Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">🎬 Films</span></div>
-      <div class="genre-chips"><span class="chip" data-gid="anime">🇯🇵 Animé</span>${list.map(g => `<span class="chip" data-gid="${g.id}">${esc(g.name)}</span>`).join('')}</div>
-      <p class="genre-help">Cochez plusieurs genres pour les combiner (ex. Action + Comédie).</p>`;
+      <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">📺 Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">🎬 Films</span>
+      <span id="expGenreBtnBox"></span></div>
+      <p class="genre-help">Choisissez plusieurs genres pour les combiner (ex. Action + Comédie).</p>`;
     paintGenreChips();
     genresEl.querySelectorAll('[data-gk]').forEach(ch => ch.onclick = () => {
       if (exploreGenreKind === ch.dataset.gk) return;
@@ -344,32 +364,18 @@ route('explore', async (el) => {
       const had = !!exploreGenre; exploreGenre = null;
       drawGenres(); if (had) doSearch();
     });
-    genresEl.querySelectorAll('[data-gid]').forEach(ch => ch.onclick = () => {
-      const first = !exploreGenre;
-      const g = exploreGenre && exploreGenre.kind === kind ? exploreGenre : { kind, ids: [], names: {}, anime: false, sort: (exploreGenre && exploreGenre.sort) || 'pop' };
-      if (ch.dataset.gid === 'anime') g.anime = !g.anime;
-      else {
-        const id = Number(ch.dataset.gid);
-        if (g.ids.includes(id)) g.ids = g.ids.filter(x => x !== id); else { g.ids = [...g.ids, id]; g.names[id] = ch.textContent; }
-      }
-      g.low = false;
-      exploreGenre = (g.ids.length || g.anime) ? g : null;
-      input.value = ''; exploreQuery = '';
-      paintGenreChips(); doSearch();
-      if (first && exploreGenre) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
   };
   const showGenre = async () => {
     const tok = ++rowsTok, g = exploreGenre;
     let page = 1, hits = [];
     results.innerHTML = `<div class="genre-results">
       <div class="genre-res-head"><h2>${esc([...(g.anime ? ['Animé'] : []), ...g.ids.map(id => g.names[id])].join(' + '))} · ${g.kind === 'tv' ? 'Séries' : 'Films'}</h2><span class="chip" id="genreClose" title="Revenir à Explorer">✕ Fermer</span></div>
-      <div class="pill-tabs" id="genreSort">${GENRE_SORTS.map(([k, l]) => `<span class="chip ${g.sort === k ? 'active' : ''}" data-gs="${k}">${l}</span>`).join('')}</div>
+      <div class="pick-bar" id="genreSort"><button type="button" class="pick-btn" id="genreSortBtn">Trier : ${esc((GENRE_SORTS.find(x => x[0] === g.sort) || GENRE_SORTS[0])[1])} <span class="pick-arrow">▾</span></button></div>
       <div class="ps-grid" id="genreGrid"><div class="loading">Chargement…</div></div>
       <div class="genre-more"><button class="btn" id="genreMore" hidden>Voir plus</button></div></div>`;
     const grid = results.querySelector('#genreGrid'), more = results.querySelector('#genreMore');
     results.querySelector('#genreClose').onclick = () => { exploreGenre = null; paintGenreChips(); doSearch(); };
-    results.querySelectorAll('[data-gs]').forEach(ch => ch.onclick = () => { g.sort = ch.dataset.gs; g.low = false; showGenre(); });
+    results.querySelector('#genreSortBtn').onclick = () => openSortSheet(GENRE_SORTS, g.sort, (k) => { if (k === g.sort) return; g.sort = k; g.low = false; showGenre(); });
     const load = async () => {
       more.disabled = true;
       try {
@@ -435,7 +441,7 @@ route('preview', async (el, rest) => {
               <div class="tags"><span class="chip">${meta.totalEpisodes || 0} épisode(s)</span>${meta.vote ? `<span class="chip">⭐ ${meta.vote.toFixed(1)}</span>` : ''}</div>
               <div class="appr-slot" id="apprSlot"></div>
               <div class="overview">${esc(meta.overview || '')}</div>
-              <div class="detail-actions"><button class="btn primary" id="pvAdd">➕ Ajouter à ma bibliothèque</button></div>
+              <div class="detail-actions"><button class="btn primary" id="pvAdd">＋ Ajouter à mes séries</button></div>
             </div>
           </div>
         </div>

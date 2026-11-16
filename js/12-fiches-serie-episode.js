@@ -38,7 +38,7 @@ route('show', async (el, rest) => {
           <div class="detail-actions">
             <button class="btn ${isFavShow(sh) ? 'on' : ''}" id="btnFav">${isFavShow(sh) ? '❤️ Dans mes favoris' : '♡ Ajouter aux favoris'}</button>
             ${sh.seenKeys.size === 0
-              ? `<button class="btn ${userState.watchlist[sh.key] ? 'on' : ''}" id="btnLater">${userState.watchlist[sh.key] ? '✓ À voir plus tard' : '+ À voir plus tard'}</button>`
+              ? ((sh.archived || sh.custom) ? '' : `<button class="btn ${sh.followed ? '' : 'primary'}" id="btnLater">${sh.followed ? 'Retirer de mes séries' : '＋ Ajouter à mes séries'}</button>`)
               : (sh.archived ? '' : `<button class="btn ${isPinnedWatching(sh) ? 'on' : ''}" id="btnPin">${isPinnedWatching(sh) ? '📌 Épinglée' : '📌 Épingler'}</button>`)}
             ${sh.archived ? '<button class="btn primary" id="btnResume">▶ Reprendre la série</button>' : ''}
             <button class="btn" id="btnMore" aria-label="Plus d’actions">⋯ Plus</button>
@@ -61,7 +61,7 @@ route('show', async (el, rest) => {
   const bPin = el.querySelector('#btnPin');
   if (bPin) bPin.onclick = () => { togglePinWatching(sh); toast(isPinnedWatching(sh) ? 'Série épinglée' : 'Série désépinglée'); render(); };
   const bLater = el.querySelector('#btnLater');
-  if (bLater) bLater.onclick = () => { toggleWatchlist(sh); toast(userState.watchlist[sh.key] ? 'Ajoutée à « À voir plus tard »' : 'Retirée de « À voir plus tard »'); render(); };
+  if (bLater) bLater.onclick = () => afterMyShowToggle(sh, toggleMyShow(sh));
   const bResume = el.querySelector('#btnResume');
   if (bResume) bResume.onclick = () => { toggleArchived(sh); toast('Série reprise'); render(); };
   wireRecoBy(el, sh.key);

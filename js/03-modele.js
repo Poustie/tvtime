@@ -83,6 +83,8 @@ function buildModel() {
 
   // A show with any watched episode is automatically "followed".
   for (const sh of shows.values()) if (sh.seenKeys.size > 0) sh.followed = true;
+  // « Mes séries » (séries jamais commencées) : watchlist[clé] = true → ajoutée ; false → retirée (même si l'export la marquait suivie).
+  for (const sh of shows.values()) if (sh.seenKeys.size === 0 && userState.watchlist && typeof userState.watchlist[sh.key] === 'boolean') sh.followed = userState.watchlist[sh.key];
 
   // seen timestamps map for activity
   const seenDates = [];

@@ -42,7 +42,7 @@ route('home', async (el) => {
   wireSearchBtn(el);
   el.querySelectorAll('#seriesTabs .chip').forEach(c => c.onclick = () => { seriesTab = c.dataset.stab; render(); });
   const bArch = el.querySelector('#btnArchived');
-  if (bArch) bArch.onclick = () => { libFilter.kind = 'series'; libFilter.tab = 'archived'; libBackTo = '#/home'; location.hash = '#/library'; };
+  if (bArch) bArch.onclick = () => { libFilter.kind = 'series'; libFilter.tab = 'archived'; libFilter.genres = []; libBackTo = '#/home'; location.hash = '#/library'; };
   const bReorder = el.querySelector('#btnReorder');
   if (bReorder) bReorder.onclick = () => { homeEditOrder = !homeEditOrder; render(); };
 

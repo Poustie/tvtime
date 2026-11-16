@@ -1,7 +1,7 @@
 /* Mon TV Time — Bibliothèque et genres */
 'use strict';
 //////////////////////// Library view ////////////////////////
-let libFilter = { q: '', kind: 'series', tab: 'following', movieTab: 'all', sort: 'az', genres: [], movieGenres: [] };
+let libFilter = { q: '', kind: 'series', tab: 'watching', movieTab: 'all', sort: 'az', genres: [], movieGenres: [] };
 // ---------- Genres (filtres de la Bibliothèque et d'Explorer) ----------
 const ANIME = 'Animé'; // pas un genre TMDB : Animation + langue d'origine japonaise
 function showTmdbIdOf(sh) { return sh.forcedTmdb || (sh.tvdbId != null ? tmdbCache.map[sh.tvdbId] : null) || null; }
@@ -58,15 +58,15 @@ function fillGenreInfo(kind, items, onProgress) {
     .finally(() => { _fillRun[kind] = null; });
   return _fillRun[kind];
 }
-// Boutons de genres à cocher (plusieurs = l'œuvre doit avoir TOUS les genres cochés), avec le nombre d'œuvres restantes.
-function genreChipsHtml(items, genresOf, sel) {
+// Genres à cocher d'une collection (plusieurs = l'œuvre doit avoir TOUS les genres cochés), avec le nombre d'œuvres restantes :
+// [{ id, label, n, ico }] pour la fenêtre « Genres » (openGenreSheet). « Animé » en premier.
+function genreEntries(items, genresOf, sel) {
   const cnt = new Map();
   for (const it of items) for (const g of new Set(genresOf(it))) cnt.set(g, (cnt.get(g) || 0) + 1);
   for (const g of sel) if (!cnt.has(g)) cnt.set(g, 0);
-  const list = [...cnt].filter(([g, n]) => n > 0 || sel.includes(g))
-    .sort((a, b) => (b[0] === ANIME) - (a[0] === ANIME) || a[0].localeCompare(b[0], 'fr'));
-  return (sel.length ? '<span class="chip genre-clear" data-gclear="1">✕ Effacer</span>' : '<span class="genre-lbl">🎭 Genres</span>') +
-    list.map(([g, n]) => `<span class="chip ${sel.includes(g) ? 'active' : ''}" data-g="${esc(g)}">${g === ANIME ? '🇯🇵 ' : ''}${esc(g)} <b class="chip-n">${n}</b></span>`).join('');
+  return [...cnt].filter(([g, n]) => n > 0 || sel.includes(g))
+    .sort((a, b) => (b[0] === ANIME) - (a[0] === ANIME) || a[0].localeCompare(b[0], 'fr'))
+    .map(([g, n]) => ({ id: g, label: g, n, ico: g === ANIME ? '🇯🇵' : '' }));
 }
 const hasAllGenres = (genresOf, sel) => (it) => { if (!sel.length) return true; const g = genresOf(it); return sel.every(x => g.includes(x)); };
 // Explorer : liste des genres TMDB (gardée 30 jours) et recherche « par genre ».
@@ -109,7 +109,6 @@ route('library', async (el) => {
       <h1>Bibliothèque</h1>
       <span class="sub" id="libCount"></span>
       <div class="spacer"></div>
-      <div class="sort-chips" id="libSort"></div>
       <input class="input" id="libSearch" placeholder="Rechercher…" value="${esc(libFilter.q)}" style="min-width:200px">
     </div>
     <div class="pill-tabs" id="libKind">
@@ -117,16 +116,19 @@ route('library', async (el) => {
       <span class="chip ${libFilter.kind === 'movie' ? 'active' : ''}" data-kind="movie">🎬 Films</span>
     </div>
     <div class="pill-tabs" id="libTabs"></div>
-    <div class="genre-bar"><div class="genre-chips" id="libGenres"></div><span class="sub" id="libGenreNote"></span></div>
+    <div class="pick-bar"><span id="libSort"></span><span id="libGenres"></span><span class="sub" id="libGenreNote"></span></div>
     <div class="grid" id="libGrid"></div>`;
 
   const seriesTabs = [
-    ['following', 'Suivies', s => s.followed && !s.archived],
-    ['watchlist', 'À voir plus tard', s => userState.watchlist[s.key] || s.specialStatus === 'for_later'],
-    ['favorites', 'Favoris', s => isFavShow(s)],
-    ['archived', 'Arrêtées', s => s.archived],
+    ['watching', 'En cours', s => seriesCategory(s) === 'watching'],
     ['all', 'Tout', () => true],
+    ['archived', 'Arrêtées', s => s.archived],
+    ['favorites', 'Favoris', s => isFavShow(s)],
+    ['notStarted', 'Pas commencées', s => seriesCategory(s) === 'notStarted'], // suivies, jamais démarrées, non arrêtées
   ];
+  // Anciens noms d'onglet (valeur gardée en mémoire ou par défaut d'avant) : « Suivies » → En cours, « À voir plus tard » → Pas commencées.
+  libFilter.tab = ({ following: 'watching', watchlist: 'notStarted' })[libFilter.tab] || libFilter.tab;
+  if (!seriesTabs.some(t => t[0] === libFilter.tab)) libFilter.tab = 'watching';
   const movieTabs = [
     ['all', 'Tout', () => true],
     ['towatch', 'À voir', m => movieStatus(m) === 'towatch'],
@@ -136,6 +138,7 @@ route('library', async (el) => {
 
   const tabsEl = el.querySelector('#libTabs');
   function drawTabs() {
+    if (!MODEL) buildModel(); // seriesCategory (onglets En cours / Pas commencées) lit le modèle
     const tabs = libFilter.kind === 'movie' ? movieTabs : seriesTabs;
     const source = libFilter.kind === 'movie' ? allMovies : shows;
     const cur = libFilter.kind === 'movie' ? libFilter.movieTab : libFilter.tab;
@@ -164,24 +167,22 @@ route('library', async (el) => {
     return s;
   };
   function drawSort() {
-    sortEl.innerHTML = sortChipsHtml(libSortNow(), hideScoreSort(), libFilter.kind !== 'movie');
-    sortEl.querySelectorAll('.chip').forEach(c => c.onclick = () => { libFilter.sort = nextSort(libSortNow(), c.dataset.sort); drawSort(); drawLib(); });
+    sortEl.innerHTML = sortBtnHtml('libSortBtn', libSortNow());
+    sortEl.querySelector('button').onclick = () => openSortSheet(sortOptionList(hideScoreSort(), libFilter.kind !== 'movie'), libSortNow(), (k) => { libFilter.sort = k; drawSort(); drawLib(); });
   }
   drawSort();
 
   const genreBox = el.querySelector('#libGenres'), genreNote = el.querySelector('#libGenreNote');
   const genreSelOf = () => (libFilter.kind === 'movie' ? libFilter.movieGenres : libFilter.genres);
-  genreBox.onclick = (ev) => {
-    const ch = ev.target.closest('.chip'); if (!ch) return;
-    const k = libFilter.kind === 'movie' ? 'movieGenres' : 'genres';
-    if (ch.dataset.gclear) libFilter[k] = [];
-    else { const g = ch.dataset.g; libFilter[k] = libFilter[k].includes(g) ? libFilter[k].filter(x => x !== g) : [...libFilter[k], g]; }
-    drawLib();
-  };
+  let genreCtx = { list: [], genresOf: () => [] }; // collection courante (déjà filtrée par l'onglet et les genres cochés) pour la fenêtre « Genres »
   const drawGenreChips = (list, genresOf) => {
-    const sl = genreBox.scrollLeft; // garder la position de la rangée
-    genreBox.innerHTML = genreChipsHtml(list, genresOf, genreSelOf());
-    genreBox.scrollLeft = sl;
+    genreCtx = { list, genresOf };
+    genreBox.innerHTML = genreBtnHtml('libGenreBtn', genreSelOf().length);
+    genreBox.querySelector('button').onclick = () => {
+      const k = libFilter.kind === 'movie' ? 'movieGenres' : 'genres';
+      // Les effectifs sont ceux des œuvres de l'onglet qui restent avec les genres déjà cochés (genreCtx.list) ; les genres cochés restent listés.
+      openGenreSheet(genreEntries(genreCtx.list, genreCtx.genresOf, genreSelOf()), genreSelOf(), (sel) => { libFilter[k] = sel; drawLib(); });
+    };
   };
   // Genres / langues pas encore connus : récupérés en arrière-plan (une seule fois), puis la page se met à jour.
   const startFill = (kind, items, label) => {
@@ -196,6 +197,7 @@ route('library', async (el) => {
     if (!fill) genreNote.textContent = '';
   };
   function drawLib() {
+    if (!MODEL) buildModel();
     const grid = el.querySelector('#libGrid');
     const q = libFilter.q.trim().toLowerCase();
     genreNote.textContent = '';
@@ -295,6 +297,46 @@ function openActionSheet(title, items) {
     });
 }
 
+// ---- Tri et genres : un bouton ouvre une fenêtre du bas (même style que « ⋯ Plus »), plus de pastilles qui défilent sur le côté ----
+const SORT_LABELS = { az: 'A → Z', za: 'Z → A', recent: 'Ajout récent', old: 'Ajout ancien', best: 'Mieux notés d’abord', worst: 'Moins bien notés d’abord', lastseen: 'Dernier épisode vu', nextair: 'Prochaine sortie' };
+// Tris proposés : « Réaction » masqué pour les films « À voir » (hideScore), tris propres aux séries seulement pour les séries.
+function sortOptionList(hideScore, withShowSorts) {
+  const keys = ['az', 'za', 'recent', 'old'].concat(hideScore ? [] : ['best', 'worst'], withShowSorts ? ['lastseen', 'nextair'] : []);
+  return keys.map(k => [k, SORT_LABELS[k]]);
+}
+const sortBtnHtml = (id, cur) => `<button type="button" class="pick-btn" id="${id}">Trier : ${esc(SORT_LABELS[cur] || SORT_LABELS.az)} <span class="pick-arrow">▾</span></button>`;
+const genreBtnHtml = (id, n) => `<button type="button" class="pick-btn${n ? ' on' : ''}" id="${id}">🎭 Genres${n ? ' (' + n + ')' : ''} <span class="pick-arrow">▾</span></button>`;
+// Tri : liste à choix unique ; un appui choisit et ferme. options = [[clé, libellé]].
+function openSortSheet(options, cur, onPick) {
+  showModal(`<h2>Trier par</h2>
+    <div class="sheet-list" role="radiogroup">${options.map(([k, l]) => `<button type="button" role="radio" aria-checked="${k === cur}" class="sheet-item${k === cur ? ' on' : ''}" data-k="${esc(k)}">
+      <span class="si-ico">${k === cur ? '✓' : ''}</span><span class="si-txt">${esc(l)}</span></button>`).join('')}</div>
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`,
+    (root) => {
+      sheetStyle(root);
+      root.querySelectorAll('.sheet-item').forEach(b => b.onclick = () => { closeModal(); onPick(b.dataset.k); });
+    });
+}
+// Genres : liste à cocher (plusieurs). entries = [{ id, label, n?, ico? }] ; « Effacer » décoche tout, « OK » applique, fermer sans OK n'applique rien.
+function openGenreSheet(entries, selected, onApply, title) {
+  let sel = selected.map(String);
+  const rows = () => entries.map((e, i) => { const on = sel.includes(String(e.id));
+    return `<button type="button" role="checkbox" aria-checked="${on}" class="sheet-item${on ? ' on' : ''}" data-i="${i}"><span class="si-ico">${on ? '☑' : '☐'}</span>
+      <span class="si-txt">${e.ico ? e.ico + ' ' : ''}${esc(e.label)}</span>${e.n != null ? `<b class="chip-n sheet-n">${e.n}</b>` : ''}</button>`; }).join('');
+  showModal(`<h2>${esc(title || 'Genres')}</h2>
+    <p class="hint">Cochez plusieurs genres : il faut les avoir tous.</p>
+    <div class="sheet-list sheet-scroll" id="gSheetList">${rows()}</div>
+    <div class="row"><button class="btn ghost" id="gClear">Effacer</button><button class="btn primary" id="gOk">OK</button></div>`,
+    (root) => {
+      sheetStyle(root);
+      const list = root.querySelector('#gSheetList');
+      const paint = () => { const y = list.scrollTop; list.innerHTML = rows(); list.scrollTop = y; };
+      list.onclick = (ev) => { const b = ev.target.closest('.sheet-item'); if (!b) return; const id = String(entries[+b.dataset.i].id); sel = sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]; paint(); };
+      root.querySelector('#gClear').onclick = () => { sel = []; paint(); };
+      root.querySelector('#gOk').onclick = () => { closeModal(); onApply(entries.map(e => e.id).filter(id => sel.includes(String(id))).concat(sel.filter(x => !entries.some(e => String(e.id) === x)))); };
+    });
+}
+
 // Série : TMDB + fiche (nécessaires pour « Marquer une saison vue » et « Ajouter un épisode » depuis une affiche).
 async function showMetaFor(sh) {
   let tmdbId = null, meta = null;
@@ -311,19 +353,19 @@ function confirmStopShow(sh) {
     (root) => { root.querySelector('#archGo').onclick = () => { closeModal(); toggleArchived(sh); toast('Série arrêtée'); render(); }; });
 }
 // Liste des actions d'une série. ctx = { meta, tmdbId, page: true } quand la feuille s'ouvre depuis la FICHE : ce qui y est déjà
-// visible en bouton (favoris, À voir plus tard / Épingler, Reprendre) n'est pas répété (règle R1). La feuille d'affiche est complète.
+// visible en bouton (favoris, Mes séries / Épingler, Reprendre) n'est pas répété (règle R1). La feuille d'affiche est complète.
 function showActionItems(sh, ctx) {
   const page = !!(ctx && ctx.page), started = sh.seenKeys.size > 0;
-  const fav = isFavShow(sh), pin = isPinnedWatching(sh), later = !!userState.watchlist[sh.key];
+  const fav = isFavShow(sh), pin = isPinnedWatching(sh), mine = !!sh.followed;
   const items = [];
   if (!page) items.push({ icon: fav ? '❤️' : '♡', label: fav ? 'Dans mes favoris' : 'Ajouter aux favoris', sub: fav ? 'Toucher pour retirer' : '', on: fav,
     run: () => { toggleFavShow(sh); toast(isFavShow(sh) ? 'Ajoutée aux favoris' : 'Retirée des favoris'); render(); } });
   // Épingler : bouton visible sur la fiche d'une série commencée ; sinon dans la feuille.
   if ((!page || !started) && !sh.archived) items.push({ icon: '📌', label: pin ? 'Épinglée' : 'Épingler', sub: pin ? 'Toucher pour désépingler' : 'Reste dans « En cours » même sans visionnage récent', on: pin,
     run: () => { togglePinWatching(sh); toast(isPinnedWatching(sh) ? 'Série épinglée' : 'Série désépinglée'); render(); } });
-  // À voir plus tard : seulement tant qu'aucun épisode n'est vu (bouton visible sur la fiche).
-  if (started ? later : !page) items.push({ icon: '🕒', label: later ? '✓ À voir plus tard' : '+ À voir plus tard', sub: later ? 'Toucher pour retirer' : '', on: later,
-    run: () => { toggleWatchlist(sh); toast(userState.watchlist[sh.key] ? 'Ajoutée à « À voir plus tard »' : 'Retirée de « À voir plus tard »'); render(); } });
+  // Mes séries : seulement tant qu'aucun épisode n'est vu (sur la fiche, c'est un bouton visible).
+  if (!started && !page && !sh.archived && !sh.custom) items.push({ icon: mine ? '➖' : '＋', label: mine ? 'Retirer de mes séries' : 'Ajouter à mes séries',
+    run: () => afterMyShowToggle(sh, toggleMyShow(sh)) });
   items.push({ icon: '📃', label: 'Ajouter à une liste', run: () => openAddToListModal('tv', sh) });
   if (isRewatching(sh)) items.push({ icon: '🔁', label: 'Arrêter le revisionnage', run: () => { if (userState.rewatching) delete userState.rewatching[sh.key]; scheduleSaveState(); toast('Revisionnage arrêté'); render(); } });
   if (sh.archived) { if (!page) items.push({ icon: '▶', label: 'Reprendre la série', run: () => { toggleArchived(sh); toast('Série reprise'); render(); } }); }
