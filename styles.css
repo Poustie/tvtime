@@ -835,3 +835,17 @@ html.light .detail-hero {
 .ep-react-btn::after { inset: -11px -6px; }
 .home-order { gap: 12px; }
 .ord-btn { width: 32px; }
+
+/* Lot 5 : puces de la fiche série, rewatch verrouillé tant que l'épisode n'est pas vu */
+.chip[hidden] { display: none; }
+.chip.chip-stop { background: rgba(239,68,68,.18); border-color: rgba(239,68,68,.55); color: #ffb4b4; }
+.ep:not(.seen) .rw { opacity: .2; cursor: not-allowed; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Lot 5-b : états d'étiquette supplémentaires, aide des stats */
+.owned-badge.st-stale { color: #fbbf24; }
+.owned-badge.st-stopped { color: var(--muted); }
+.exp-hit.st-stale .ps-poster::after { border-color: #fbbf24; }
+.exp-hit.st-stopped .ps-poster::after { border-color: var(--muted); }
+.stat-help { color: var(--muted); margin: 6px 2px 12px; }
+.imp-item .title { min-height: 2.5em; }
