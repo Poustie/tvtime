@@ -24,13 +24,13 @@ function expHitsHtml(hits, ownedKey) {
   return hits.map((h, i) => {
     const name = h.name || h.title || '';
     const date = (h.first_air_date || h.release_date || '').slice(0, 4);
-    const badge = h.media_type === 'tv' ? '📺 Série' : '🎬 Film';
+    const badge = h.media_type === 'tv' ? icon('tv') + ' Série' : icon('film') + ' Film';
     const im = h.poster_path ? `<img loading="lazy" src="${IMG(h.poster_path, 'w185')}" alt="">` : `<div class="fallback-title">${esc(name)}</div>`;
     const ok = ownedKey(h), owned = !!ok;
     const st = owned ? ownedState(h.media_type === 'tv' ? 'tv' : 'movie', ok) : null;
     return `<div class="exp-hit${owned ? ' owned ' + st.cls : ''}" data-open="${i}">
-      <div class="ps-poster">${im}<span class="badge-tag">${badge}</span>
-        ${owned ? ownedBadgeHtml(st) : `<button class="exp-add" data-add="${i}" title="Ajouter à ma bibliothèque" aria-label="Ajouter à ma bibliothèque">＋</button>`}</div>
+      <div class="ps-poster">${im}<span class="badge-tag">${badge}</span>${ratingBadgeHtml(h.vote_average)}
+        ${owned ? ownedBadgeHtml(st) : `<button class="exp-add" data-add="${i}" title="Ajouter à ma bibliothèque" aria-label="Ajouter à ma bibliothèque">${icon('plus')}</button>`}</div>
       <div class="ps-name">${esc(name)}${h.sub ? ` <span>· ${esc(h.sub)}</span>` : (date ? ` <span>(${date})</span>` : '')}</div>
     </div>`;
   }).join('');
@@ -54,7 +54,7 @@ function wireExpHits(container, hits, ownedKey) {
     navTo('#/preview/' + (h.media_type === 'tv' ? 'tv' : 'movie') + '/' + h.id);
   });
 }
-const slimHit = (h, type) => ({ media_type: type, id: h.id, name: h.name, title: h.title, poster_path: h.poster_path, first_air_date: h.first_air_date, release_date: h.release_date });
+const slimHit = (h, type) => ({ media_type: type, id: h.id, name: h.name, title: h.title, poster_path: h.poster_path, first_air_date: h.first_air_date, release_date: h.release_date, vote_average: h.vote_average ? Math.round(h.vote_average * 10) / 10 : undefined });
 const slimHits = (r, type) => (r.results || []).filter(h => h.poster_path).slice(0, 20).map(h => slimHit(h, type));
 // Seeds for « pour vous »: favourites / well-rated works, most recently watched first.
 function recoSeeds(kind) {
@@ -309,7 +309,7 @@ route('explore', async (el) => {
   const showTrending = async () => {
     const tok = ++rowsTok;
     const rows = exploreRowsShown();
-    results.innerHTML = rows.map(r => `<div class="exp-section" data-row="${r.id}"><h2>${r.title}</h2><div class="exp-row" id="${r.id}"><div class="loading">Chargement…</div></div></div>`).join('');
+    results.innerHTML = rows.map(r => `<div class="exp-section" data-row="${r.id}"><h2>${leadIcon(r.title)}</h2><div class="exp-row" id="${r.id}"><div class="loading">Chargement…</div></div></div>`).join('');
     await Promise.all(rows.map(async (r) => {
       let hits = [];
       try { hits = await exploreRowHits(r); } catch {}
@@ -354,7 +354,7 @@ route('explore', async (el) => {
     if (kind !== exploreGenreKind) return;
     genreList = list;
     genresEl.innerHTML = `<div class="genre-head">
-      <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">📺 Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">🎬 Films</span>
+      <span class="chip ${kind === 'tv' ? 'active' : ''}" data-gk="tv">${icon('tv')} Séries</span><span class="chip ${kind === 'movie' ? 'active' : ''}" data-gk="movie">${icon('film')} Films</span>
       <span id="expGenreBtnBox"></span></div>
       <p class="genre-help">Choisissez plusieurs genres pour les combiner (ex. Action + Comédie).</p>`;
     paintGenreChips();
@@ -431,19 +431,17 @@ route('preview', async (el, rest) => {
       const meta = await getShowMeta(id);
       const genres = meta.genres.join(' · ');
       pv.innerHTML = `
-        <div class="detail-hero title-top" style="margin-top:12px">
-          <div class="bg" style="${meta.backdrop ? `background-image:url(${IMG(meta.backdrop, 'w780')})` : ''}"></div>
-          <div class="inner">
-            <h1>${esc(fullTitle(meta.name, meta.originalName))}</h1>
-            <div class="poster">${meta.poster ? `<img src="${IMG(meta.poster, 'w342')}" alt="">` : '<div class="ph">📺</div>'}</div>
-            <div>
-              <div class="sub">${esc((meta.firstAir || '').slice(0, 4))}${meta.status ? ' · ' + esc(statusFr(meta.status)) : ''} ${genres ? '· ' + esc(genres) : ''}</div>
-              <div class="tags"><span class="chip">${meta.totalEpisodes || 0} épisode(s)</span>${meta.vote ? `<span class="chip">⭐ ${meta.vote.toFixed(1)}</span>` : ''}</div>
-              <div class="appr-slot" id="apprSlot"></div>
-              <div class="overview">${esc(meta.overview || '')}</div>
-              <div class="detail-actions"><button class="btn primary" id="pvAdd">＋ Ajouter à mes séries</button></div>
-            </div>
-          </div>
+        ${immHeroHtml({
+          backdrop: meta.backdrop, poster: meta.poster, posterHtml: meta.poster ? `<img src="${IMG(meta.poster, 'w342')}" alt="">` : '<div class="ph">📺</div>',
+          title: fullTitle(meta.name, meta.originalName),
+          sub: esc((meta.firstAir || '').slice(0, 4)) + (meta.status ? ' · ' + esc(statusFr(meta.status)) : '') + (genres ? ' · ' + esc(genres) : ''),
+          tags: `<span class="chip">${meta.totalEpisodes || 0} épisode(s)</span>`,
+        })}
+        <div class="imm-body">
+          <div class="detail-actions"><button class="btn primary" id="pvAdd">${icon('plus')} Ajouter à mes séries</button></div>
+          ${meta.vote ? `<div class="glass avis-card avis-only"><div class="avis-head"><span class="react-label">Avis du public</span>${avgHtml(meta.vote)}</div></div>` : ''}
+          <div class="appr-slot" id="apprSlot"></div>
+          ${meta.overview ? `<div class="glass imm-card"><div class="overview">${esc(meta.overview)}</div></div>` : ''}
         </div>
         ${meta.seasons.length ? `<div class="pv-seasons">${meta.seasons.map(s => `<span class="chip">Saison ${s.n} · ${s.count} ép.</span>`).join('')}</div>` : ''}
         ${castHtml(meta.cast)}
@@ -458,19 +456,17 @@ route('preview', async (el, rest) => {
       const genres = meta.genres.join(' · ');
       const rt = meta.runtime;
       pv.innerHTML = `
-        <div class="detail-hero title-top" style="margin-top:12px">
-          <div class="bg" style="${meta.backdrop ? `background-image:url(${IMG(meta.backdrop, 'w780')})` : ''}"></div>
-          <div class="inner">
-            <h1>${esc(fullTitle(meta.title, meta.originalTitle))}</h1>
-            <div class="poster">${meta.poster ? `<img src="${IMG(meta.poster, 'w342')}" alt="">` : '<div class="ph">🎬</div>'}</div>
-            <div>
-              <div class="sub">${esc((meta.release || '').slice(0, 4))}${rt ? ' · ' + Math.floor(rt / 60) + 'h' + String(rt % 60).padStart(2, '0') : ''} ${genres ? '· ' + esc(genres) : ''}${meta.vote ? ' · ⭐ ' + meta.vote.toFixed(1) : ''}</div>
-              ${meta.tagline ? `<div class="sub" style="font-style:italic;margin-top:4px">${esc(meta.tagline)}</div>` : ''}
-              <div class="appr-slot" id="apprSlot"></div>
-              <div class="overview">${esc(meta.overview || '')}</div>
-              <div class="detail-actions"><button class="btn primary" id="pvAdd">➕ Ajouter à ma bibliothèque</button></div>
-            </div>
-          </div>
+        ${immHeroHtml({
+          backdrop: meta.backdrop, poster: meta.poster, posterHtml: meta.poster ? `<img src="${IMG(meta.poster, 'w342')}" alt="">` : '<div class="ph">🎬</div>',
+          title: fullTitle(meta.title, meta.originalTitle),
+          sub: [(meta.release || '').slice(0, 4), rt ? Math.floor(rt / 60) + 'h' + String(rt % 60).padStart(2, '0') : '', genres].filter(Boolean).map(esc).join(' · '),
+        })}
+        <div class="imm-body">
+          ${meta.tagline ? `<div class="imm-tagline">${esc(meta.tagline)}</div>` : ''}
+          <div class="detail-actions"><button class="btn primary" id="pvAdd">${icon('plus')} Ajouter à ma bibliothèque</button></div>
+          ${meta.vote ? `<div class="glass avis-card avis-only"><div class="avis-head"><span class="react-label">Avis du public</span>${avgHtml(meta.vote)}</div></div>` : ''}
+          <div class="appr-slot" id="apprSlot"></div>
+          ${meta.overview ? `<div class="glass imm-card"><div class="overview">${esc(meta.overview)}</div></div>` : ''}
         </div>
         ${castHtml(meta.cast)}
         ${trailerHtml(meta.trailer)}

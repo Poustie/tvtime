@@ -18,33 +18,28 @@ route('show', async (el, rest) => {
   const genres = meta ? meta.genres.join(' · ') : '';
   el.innerHTML = `
     ${backBtn('#/home')}
-    <div class="detail-hero title-top" style="margin-top:12px">
-      <div class="bg" style="${meta && meta.backdrop ? `background-image:url(${IMG(meta.backdrop, 'w780')})` : ''}"></div>
-      <div class="inner">
-        <h1>${esc(meta && meta.name ? fullTitle(meta.name, meta.originalName) : displayName(sh))}</h1>
-        <div class="poster">${posterHtml(sh, meta && meta.poster)}</div>
-        <div>
-          <div class="sub">${meta ? esc((meta.firstAir || '').slice(0, 4)) + (meta.status ? ' · ' + esc(statusFr(meta.status)) : '') : ''} ${genres ? '· ' + esc(genres) : ''}</div>
-          <div class="tags">
-            ${sh.archived ? '<span class="chip chip-stop">⏹ Arrêtée</span>' : ''}
-            <span class="chip" id="showCount">${esc(showCountText(sh, meta))}</span>
-            <span class="chip" id="showRwChip"${isRewatching(sh) ? '' : ' hidden'}>${esc(showRewatchText(sh))}</span>
-          </div>
-          ${recoByHtml(sh.key)}
-          <div id="nextEpLine"></div>
-          <div class="movie-react show-react"><span class="react-label">Ma réaction</span>${reactPickerHtml(showScore(sh), true, !sh.seenKeys.size)}</div>
-          ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
-          <div class="overview">${esc(meta ? meta.overview : '')}</div>
-          <div class="detail-actions">
-            <button class="btn ${isFavShow(sh) ? 'on' : ''}" id="btnFav">${isFavShow(sh) ? '❤️ Dans mes favoris' : '♡ Ajouter aux favoris'}</button>
-            ${sh.seenKeys.size === 0
-              ? ((sh.archived || sh.custom) ? '' : `<button class="btn ${sh.followed ? '' : 'primary'}" id="btnLater">${sh.followed ? 'Retirer de mes séries' : '＋ Ajouter à mes séries'}</button>`)
-              : (sh.archived ? '' : `<button class="btn ${isPinnedWatching(sh) ? 'on' : ''}" id="btnPin">${isPinnedWatching(sh) ? '📌 Épinglée' : '📌 Épingler'}</button>`)}
-            ${sh.archived ? '<button class="btn primary" id="btnResume">▶ Reprendre la série</button>' : ''}
-            <button class="btn" id="btnMore" aria-label="Plus d’actions">⋯ Plus</button>
-          </div>
-        </div>
+    ${immHeroHtml({
+      backdrop: meta && meta.backdrop, poster: meta && meta.poster, posterHtml: posterHtml(sh, meta && meta.poster),
+      title: meta && meta.name ? fullTitle(meta.name, meta.originalName) : displayName(sh),
+      sub: meta ? [(meta.firstAir || '').slice(0, 4), meta.status ? statusFr(meta.status) : '', genres].filter(Boolean).map(esc).join(' · ') : '',
+      tags: `${sh.archived ? '<span class="chip chip-stop">' + icon('stop') + ' Arrêtée</span>' : ''}
+        <span class="chip" id="showCount">${esc(showCountText(sh, meta))}</span>
+        <span class="chip" id="showRwChip"${isRewatching(sh) ? '' : ' hidden'}>${esc(showRewatchText(sh))}</span>`,
+    })}
+    <div class="imm-body">
+      <div class="detail-actions">
+        <button class="btn ${isFavShow(sh) ? 'on' : ''}" id="btnFav">${isFavShow(sh) ? icon('heart', 'f') + ' Dans mes favoris' : icon('heart') + ' Ajouter aux favoris'}</button>
+        ${sh.seenKeys.size === 0
+          ? ((sh.archived || sh.custom) ? '' : `<button class="btn ${sh.followed ? '' : 'primary'}" id="btnLater">${sh.followed ? 'Retirer de mes séries' : icon('plus') + ' Ajouter à mes séries'}</button>`)
+          : (sh.archived ? '' : `<button class="btn ${isPinnedWatching(sh) ? 'on' : ''}" id="btnPin">${icon('pin')} ${isPinnedWatching(sh) ? 'Épinglée' : 'Épingler'}</button>`)}
+        ${sh.archived ? '<button class="btn primary" id="btnResume">▶ Reprendre la série</button>' : ''}
+        <button class="btn" id="btnMore" aria-label="Plus d’actions">${icon('more')} Plus</button>
       </div>
+      ${recoByHtml(sh.key)}
+      <div id="nextEpLine"></div>
+      ${avisCardHtml({ cls: 'show-react', score: showScore(sh), locked: !sh.seenKeys.size, vote: meta && meta.vote })}
+      ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
+      ${meta && meta.overview ? `<div class="glass imm-card"><div class="overview">${esc(meta.overview)}</div></div>` : ''}
     </div>
     <div class="detail-tabs">
       <button class="tab active" data-tab="episodes">Épisodes</button>
@@ -83,6 +78,33 @@ route('show', async (el, rest) => {
     }
   }
 });
+
+// ---- Lot 9-B : en-tête immersif et carte « Votre avis » (fiche série, fiche film, aperçu Explorer) ----
+// o = { backdrop, poster (chemins TMDB), posterHtml, title (texte brut), sub (HTML déjà échappé), tags (HTML) }
+function immHeroHtml(o) {
+  const url = o.backdrop ? IMG(o.backdrop, 'w780') : (o.poster ? IMG(o.poster, 'w342') : '');
+  const kind = o.backdrop ? 'bd' : (o.poster ? 'pst' : 'none'); // pas de décor : affiche floutée, sinon dégradé
+  return `<div class="detail-hero title-top imm">
+    <div class="bg bg-${kind}" style="${url ? `background-image:url(${url})` : ''}"></div>
+    <div class="poster imm-poster">${o.posterHtml || ''}</div>
+    <div class="imm-in">
+      <h1>${esc(o.title)}</h1>
+      ${o.sub ? `<div class="sub">${o.sub}</div>` : ''}
+      ${o.tags ? `<div class="tags">${o.tags}</div>` : ''}
+    </div>
+  </div>`;
+}
+const fmtVoteFr = (v) => (Number(v) > 0 ? Number(v).toFixed(1).replace('.', ',') : '');
+// Note moyenne du public (TMDB), « 7,8 ★ »
+const avgHtml = (v) => fmtVoteFr(v) ? `<span class="avis-avg" title="Note moyenne du public (TMDB)">Note moyenne <b>${fmtVoteFr(v)} ★</b></span>` : '';
+// Carte « Votre avis » : les 5 réactions en grand (même mécanique que reactPickerHtml / wireReactPicker) + note moyenne.
+// o = { cls, score, locked, vote }
+function avisCardHtml(o) {
+  return `<div class="glass avis-card ${o.cls || ''}${o.locked ? ' is-locked' : ''}">
+    <div class="avis-head"><span class="react-label">Votre avis</span>${avgHtml(o.vote)}</div>
+    ${reactPickerHtml(o.score, true, o.locked)}
+  </div>`;
+}
 
 // ---- En-tête de la fiche série : « N épisode(s) vu(s) / T » et revisionnage, remis à jour à chaque changement ----
 // Épisodes réguliers vus (saison 0 = spéciaux exclue : sinon « 74 / 73 »).
@@ -209,9 +231,9 @@ route('episode', async (el, rest) => {
       <p class="synopsis-text ep-synopsis ${hideSpoil ? 'spoil' : ''}">${esc(overviewTxt)}</p>
       <div class="detail-actions">
         <button class="btn ${seen ? 'primary' : ''}" id="epSeen">${seen ? '✓ Vu' : '✓ Je l’ai vu'}</button>
-        <button class="btn" id="epRw" ${seen ? '' : 'disabled title="Marquez d’abord l’épisode comme vu"'}>🔁 Je l’ai revu${rw > 0 ? ` · Vu ${rw + 1} fois` : ''}</button>
+        <button class="btn" id="epRw" ${seen ? '' : 'disabled title="Marquez d’abord l’épisode comme vu"'}>${icon('repeat')} Je l’ai revu${rw > 0 ? ` · Vu ${rw + 1} fois` : ''}</button>
         ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
-        ${seen ? '<button class="btn" id="epRwFix" title="Corriger le nombre de visionnages">✏️ Corriger</button>' : ''}
+        ${seen ? '<button class="btn" id="epRwFix" title="Corriger le nombre de visionnages">' + icon('edit') + ' Corriger</button>' : ''}
       </div>
       <div class="ep-react">
         <span class="react-label">Ma réaction</span>
@@ -426,7 +448,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
     const buildBody = () => {
       const pass = currentPass(sh);
       body.innerHTML = all.map(e => epHtml(sh, sn, e, pass)).join('') +
-        `<button class="btn sm ghost add-ep" data-season="${block.ds}">➕ Ajouter un épisode à la saison ${block.ds}</button>`;
+        `<button class="btn sm ghost add-ep" data-season="${block.ds}">${icon('plus')} Ajouter un épisode à la saison ${block.ds}</button>`;
       wireEpisodes(body, sh, sn, updateCount, { getPrevUnseen });
       body.querySelector('.add-ep').onclick = () => addEpisodePrompt(sh, meta, block.ds);
       updateCount();
@@ -522,7 +544,7 @@ function epHtml(sh, season, e, pass) {
     <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + epDisp(sh, season, e.n).n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
     <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" role="button" aria-label="Je l’ai revu" title="Je l’ai revu — appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
     ${epReactBtnHtml(epScore(k))}
-    ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">🗑</button>` : ''}
+    ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">${icon('trash')}</button>` : ''}
   </div>`;
 }
 

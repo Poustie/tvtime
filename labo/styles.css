@@ -964,42 +964,38 @@ html, body { overflow-x: clip; }
 #libTabs { gap: 6px; }
 #libTabs .chip { white-space: nowrap; padding: 6px 10px; }
 
-/* ===== UI labo : barre du bas en « verre liquide » (bulle flottante translucide, icônes en tuiles de couleur) ===== */
+/* ===== UI labo : barre du bas en « verre liquide » (bulle flottante TRÈS transparente, icônes à la couleur choisie) ===== */
 .bottom-nav {
-  left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 8px 4px 9px;
-  border-radius: 28px; border: 1px solid rgba(255,255,255,.13);
-  background: linear-gradient(180deg, rgba(48,52,62,.50), rgba(22,24,30,.55));
-  -webkit-backdrop-filter: blur(22px) saturate(185%); backdrop-filter: blur(22px) saturate(185%);
-  box-shadow: 0 12px 34px rgba(0,0,0,.48), inset 0 1px 0 rgba(255,255,255,.18), inset 0 -1px 0 rgba(255,255,255,.05);
+  left: 14px; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 7px 4px 8px;
+  border-radius: 30px; border: 1px solid rgba(255,255,255,.16); border-top: 1px solid rgba(255,255,255,.16);
+  background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025));
+  -webkit-backdrop-filter: blur(14px) saturate(190%); backdrop-filter: blur(14px) saturate(190%);
+  box-shadow: 0 10px 30px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.22), inset 0 -1px 0 rgba(255,255,255,.06);
 }
 .bottom-nav::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,0) 42%); }
-html.amoled .bottom-nav { background: linear-gradient(180deg, rgba(40,40,46,.55), rgba(10,10,12,.62)); }
-.bottom-nav a { gap: 5px; padding: 2px 2px 6px; color: rgba(255,255,255,.62); -webkit-tap-highlight-color: transparent; }
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,0) 45%); }
+html.amoled .bottom-nav { background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
+.bottom-nav a { gap: 4px; padding: 2px 2px 3px; color: rgba(255,255,255,.66); -webkit-tap-highlight-color: transparent;
+  text-shadow: 0 1px 3px rgba(0,0,0,.55); }
 .bottom-nav a .bn-ic {
-  width: calc(38px * var(--fs, 1)); height: calc(38px * var(--fs, 1)); border-radius: calc(11px * var(--fs, 1));
-  display: grid; place-items: center; font-size: 0; opacity: .72; filter: saturate(.9) brightness(.92);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.38), inset 0 -2px 4px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.30);
-  transition: transform .22s cubic-bezier(.2,.8,.2,1), filter .22s ease, opacity .22s ease, box-shadow .22s ease;
+  width: calc(40px * var(--fs, 1)); height: calc(32px * var(--fs, 1)); border-radius: calc(16px * var(--fs, 1));
+  display: grid; place-items: center; font-size: 0; opacity: 1; filter: none; background: transparent;
+  transition: transform .22s cubic-bezier(.2,.8,.2,1), background .22s ease, box-shadow .22s ease;
 }
-.bn-ic svg { width: 62%; height: 62%; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.bn-ic svg .f { fill: #fff; stroke: none; }
-.bn-tv { --bn: #2f8cff; background: linear-gradient(160deg, #4aa2ff, #0b5fe0); }
-.bn-mv { --bn: #ff6a2b; background: linear-gradient(160deg, #ff8a45, #e5401a); }
-.bn-ex { --bn: #34c98a; background: linear-gradient(160deg, #52d9a0, #179463); }
-.bn-fr { --bn: #ffc23a; background: linear-gradient(160deg, #ffd25c, #dc9a0a); }
-.bottom-nav a.active { color: #fff; }
-.bottom-nav a.active .bn-ic { opacity: 1; filter: none; transform: translateY(-1px) scale(1.07);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 4px rgba(0,0,0,.15), 0 0 18px color-mix(in srgb, var(--bn) 55%, transparent), 0 3px 8px rgba(0,0,0,.35); }
-.bottom-nav a:active .bn-ic { transform: scale(.92); }
-.bottom-nav a::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 22px; height: 3px; margin-left: -11px; border-radius: 2px;
-  background: var(--accent); opacity: 0; transform: scaleX(.3); transition: opacity .22s ease, transform .22s cubic-bezier(.2,.8,.2,1); }
-.bottom-nav a[data-route="home"]::after { background: #4aa2ff; } .bottom-nav a[data-route="movies"]::after { background: #ff8a45; }
-.bottom-nav a[data-route="explore"]::after { background: #52d9a0; } .bottom-nav a[data-route="friends"]::after { background: #ffd25c; }
-.bottom-nav a.active::after { opacity: 1; transform: scaleX(1); }
-html.light .bottom-nav { background: linear-gradient(180deg, rgba(255,255,255,.62), rgba(240,242,246,.58)); border-color: rgba(0,0,0,.08);
-  box-shadow: 0 10px 30px rgba(20,30,45,.18), inset 0 1px 0 rgba(255,255,255,.9); }
-html.light .bottom-nav a { color: rgba(20,24,32,.6); } html.light .bottom-nav a.active { color: #11151c; }
+.bn-ic svg { width: calc(23px * var(--fs, 1)); height: calc(23px * var(--fs, 1)); fill: none; stroke: var(--accent-ink, var(--accent));
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .62;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); transition: opacity .22s ease; }
+.bn-ic svg .f { fill: var(--accent-ink, var(--accent)); stroke: none; }
+.bottom-nav a.active { color: var(--accent-ink, var(--accent)); }
+.bottom-nav a.active .bn-ic { transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 0 16px color-mix(in srgb, var(--accent) 35%, transparent); }
+.bottom-nav a.active .bn-ic svg { opacity: 1; }
+.bottom-nav a:active .bn-ic { transform: scale(.9); }
+html.light .bottom-nav { background: linear-gradient(180deg, rgba(255,255,255,.45), rgba(255,255,255,.30)); border-color: rgba(0,0,0,.08);
+  box-shadow: 0 10px 28px rgba(20,30,45,.14), inset 0 1px 0 rgba(255,255,255,.9); }
+html.light .bottom-nav a { color: rgba(20,24,32,.62); text-shadow: none; } html.light .bottom-nav a.active { color: var(--accent-ink, var(--accent)); }
+html.light .bn-ic svg { filter: none; }
 main { padding-bottom: max(118px, calc(env(safe-area-inset-bottom) + 104px)); }
 /* Version de test : fine bande orange en haut de l'écran */
 html.labo body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 999; background: #ff8a00; pointer-events: none; }

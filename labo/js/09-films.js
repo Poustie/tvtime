@@ -79,8 +79,8 @@ route('movies', async (el) => {
       <div id="movSort"></div>
     </div>
     <div class="pill-tabs" id="movTabs">
-      <span class="chip ${moviesTab === 'towatch' ? 'active' : ''}" data-mtab="towatch">🎬 À voir (${toWatch.length})</span>
-      <span class="chip ${moviesTab === 'watched' ? 'active' : ''}" data-mtab="watched">✓ Vus (${watched.length})</span>
+      <span class="chip ${moviesTab === 'towatch' ? 'active' : ''}" data-mtab="towatch">${icon('film')} À voir (${toWatch.length})</span>
+      <span class="chip ${moviesTab === 'watched' ? 'active' : ''}" data-mtab="watched">${icon('check')} Vus (${watched.length})</span>
     </div>
     <div class="grid" id="movGrid"></div>`;
 
@@ -93,7 +93,7 @@ route('movies', async (el) => {
 
   const grid = el.querySelector('#movGrid');
   if (!list.length) {
-    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">🍿</div>${moviesTab === 'watched' ? 'Aucun film vu.' : 'Aucun film à voir.'}</div>`;
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">${emojiIcon('🍿')}</div>${moviesTab === 'watched' ? 'Aucun film vu.' : 'Aucun film à voir.'}</div>`;
     return;
   }
   grid.innerHTML = list.map(m => movieCardHtml(m)).join('');
@@ -125,43 +125,36 @@ route('movie', async (el, rest) => {
   const subBits = [year, rtStr, genres].filter(Boolean).map(esc).join(' · ');
   el.innerHTML = `
     ${backBtn('#/movies')}
-    <div class="detail-hero title-top" style="margin-top:12px">
-      <div class="bg" style="${meta && meta.backdrop ? `background-image:url(${IMG(meta.backdrop, 'w780')})` : ''}"></div>
-      <div class="inner">
-        <h1>${esc(meta && meta.title ? fullTitle(meta.title, meta.originalTitle) : movieDisplayName(m))}</h1>
-        <div class="poster">${meta && meta.poster ? `<img src="${IMG(meta.poster)}" alt="">` : `<div class="fallback-title">${esc(movieDisplayName(m))}</div>`}</div>
-        <div>
-          <div class="sub">${subBits}${meta && meta.vote ? (subBits ? ' · ' : '') + '⭐ ' + meta.vote.toFixed(1) : ''}</div>
-          ${meta && meta.tagline ? `<div class="sub" style="font-style:italic;margin-top:4px">${esc(meta.tagline)}</div>` : ''}
-          <div class="tags">
-            <span class="chip">${st === 'watched' ? (movieWatchedOf(m) ? '✓ Vu le ' + esc(fmtFull(movieWatchedOf(m))) : '✓ Vu') : '🎬 À voir'}</span>
-            ${st === 'watched' && rw > 0 ? `<span class="chip">🔁 Vu ${rw + 1} fois</span>` : ''}
-          </div>
-          ${recoByHtml(m.name)}
-          ${st !== 'watched' && meta && meta.id ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
-          <div class="detail-actions">
-            ${st === 'watched'
-              ? `<button class="btn" id="mRw">🔁 Je l’ai revu</button>${rw > 0 ? `<button class="btn" id="mRwMinus" title="Retirer un visionnage" aria-label="Retirer un visionnage">−1</button>` : ''}`
-              : '<button class="btn primary" id="mToggle">✓ Je l’ai vu</button>'}
-            <button class="btn ${isFavMovie(m) ? 'on' : ''}" id="mFav">${isFavMovie(m) ? '❤️ Dans mes favoris' : '♡ Ajouter aux favoris'}</button>
-            <button class="btn" id="mMore" aria-label="Plus d’actions">⋯ Plus</button>
-          </div>
-          ${st !== 'watched' ? `<div class="movie-progress" id="mProgBox">
-            <span class="react-label">⏱️ Reprise — j'en suis à</span>
-            <div class="mp-row">
-              <input type="number" id="mProgH" min="0" ${rt ? `max="${Math.floor(rt / 60)}"` : ''} value="${movieProgressOf(m) ? Math.floor(movieProgressOf(m) / 60) : ''}" placeholder="h"> <span class="mp-unit">h</span>
-              <input type="number" id="mProgM" min="0" max="59" value="${movieProgressOf(m) ? movieProgressOf(m) % 60 : ''}" placeholder="min"> <span class="mp-unit">min${rtStr ? ` / ${rtStr}` : ''}</span>
-              <button class="btn sm" id="mProgSave">Enregistrer</button>
-              ${movieProgressOf(m) ? `<button class="btn sm ghost" id="mProgClear">Effacer</button>` : ''}
-            </div>
-            <div class="mp-bar">${progressBarHtml(movieCardProgress(m))}</div>
-          </div>` : ''}
-          <div class="movie-react">
-            <span class="react-label">Ma réaction</span>
-            ${reactPickerHtml(movieScore(m), true, st !== 'watched')}
-          </div>
-        </div>
+    ${immHeroHtml({
+      backdrop: meta && meta.backdrop, poster: meta && meta.poster,
+      posterHtml: meta && meta.poster ? `<img src="${IMG(meta.poster)}" alt="">` : `<div class="fallback-title">${esc(movieDisplayName(m))}</div>`,
+      title: meta && meta.title ? fullTitle(meta.title, meta.originalTitle) : movieDisplayName(m),
+      sub: subBits,
+      tags: `<span class="chip">${st === 'watched' ? (movieWatchedOf(m) ? '✓ Vu le ' + esc(fmtFull(movieWatchedOf(m))) : '✓ Vu') : '🎬 À voir'}</span>
+        ${st === 'watched' && rw > 0 ? `<span class="chip">${icon('repeat')} Vu ${rw + 1} fois</span>` : ''}`,
+    })}
+    <div class="imm-body">
+      ${meta && meta.tagline ? `<div class="imm-tagline">${esc(meta.tagline)}</div>` : ''}
+      <div class="detail-actions">
+        ${st === 'watched'
+          ? `<button class="btn" id="mRw">${icon('repeat')} Je l’ai revu</button>${rw > 0 ? `<button class="btn" id="mRwMinus" title="Retirer un visionnage" aria-label="Retirer un visionnage">−1</button>` : ''}`
+          : `<button class="btn primary" id="mToggle">${icon('check')} Je l’ai vu</button>`}
+        <button class="btn ${isFavMovie(m) ? 'on' : ''}" id="mFav">${isFavMovie(m) ? icon('heart', 'f') + ' Dans mes favoris' : icon('heart') + ' Ajouter aux favoris'}</button>
+        <button class="btn" id="mMore" aria-label="Plus d’actions">${icon('more')} Plus</button>
       </div>
+      ${recoByHtml(m.name)}
+      ${avisCardHtml({ cls: 'movie-react', score: movieScore(m), locked: st !== 'watched', vote: meta && meta.vote })}
+      ${st !== 'watched' && meta && meta.id ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
+      ${st !== 'watched' ? `<div class="movie-progress glass imm-card" id="mProgBox">
+        <span class="react-label">⏱️ Reprise — j'en suis à</span>
+        <div class="mp-row">
+          <input type="number" id="mProgH" min="0" ${rt ? `max="${Math.floor(rt / 60)}"` : ''} value="${movieProgressOf(m) ? Math.floor(movieProgressOf(m) / 60) : ''}" placeholder="h"> <span class="mp-unit">h</span>
+          <input type="number" id="mProgM" min="0" max="59" value="${movieProgressOf(m) ? movieProgressOf(m) % 60 : ''}" placeholder="min"> <span class="mp-unit">min${rtStr ? ` / ${rtStr}` : ''}</span>
+          <button class="btn sm" id="mProgSave">Enregistrer</button>
+          ${movieProgressOf(m) ? `<button class="btn sm ghost" id="mProgClear">Effacer</button>` : ''}
+        </div>
+        <div class="mp-bar">${progressBarHtml(movieCardProgress(m))}</div>
+      </div>` : ''}
     </div>
     <div class="detail-tabs">
       <button class="tab active" data-tab="overview">Aperçu</button>
@@ -215,6 +208,7 @@ function movieCardHtml(m) {
       <div class="fallback-title">${esc(movieDisplayName(m))}</div>
       ${rating}
       ${rwBadge}
+      ${ratingBadgeHtml(movieVote(m))}
       ${MORE_BTN}
       ${prog ? `<div class="card-progress">${progressBarHtml(prog)}</div>` : ''}
     </div>

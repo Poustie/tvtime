@@ -112,13 +112,14 @@ route('library', async (el) => {
       <input class="input" id="libSearch" placeholder="Rechercher…" value="${esc(libFilter.q)}" style="min-width:200px">
     </div>
     <div class="pill-tabs" id="libKind">
-      <span class="chip ${libFilter.kind === 'series' ? 'active' : ''}" data-kind="series">📺 Séries</span>
-      <span class="chip ${libFilter.kind === 'movie' ? 'active' : ''}" data-kind="movie">🎬 Films</span>
+      <span class="chip ${libFilter.kind === 'series' ? 'active' : ''}" data-kind="series">${icon('tv')} Séries</span>
+      <span class="chip ${libFilter.kind === 'movie' ? 'active' : ''}" data-kind="movie">${icon('film')} Films</span>
     </div>
     <div class="pill-tabs" id="libTabs"></div>
     <div class="pick-bar"><span id="libSort"></span><span id="libGenres"></span><span class="sub" id="libGenreNote"></span></div>
     <div class="grid" id="libGrid"></div>`;
 
+  const LIB_TAB_ICON = { watching: 'play', all: 'library', archived: 'stop', favorites: 'heart', notStarted: 'sparkle', towatch: 'clock', watched: 'check' };
   const seriesTabs = [
     ['watching', 'En cours', s => seriesCategory(s) === 'watching'],
     ['all', 'Tout', () => true],
@@ -144,7 +145,7 @@ route('library', async (el) => {
     const cur = libFilter.kind === 'movie' ? libFilter.movieTab : libFilter.tab;
     tabsEl.innerHTML = tabs.map(([id, label, pred]) => {
       const n = source.filter(pred).length;
-      return `<span class="chip ${cur === id ? 'active' : ''}" data-tab="${id}">${label} <b class="chip-n">${n}</b></span>`;
+      return `<span class="chip ${cur === id ? 'active' : ''}" data-tab="${id}">${LIB_TAB_ICON[id] ? icon(LIB_TAB_ICON[id]) + ' ' : ''}${label} <b class="chip-n">${n}</b></span>`;
     }).join('');
     tabsEl.querySelectorAll('.chip').forEach(c => c.onclick = () => {
       if (libFilter.kind === 'movie') libFilter.movieTab = c.dataset.tab; else libFilter.tab = c.dataset.tab;
@@ -210,7 +211,7 @@ route('library', async (el) => {
       if (q) list = list.filter(m => (movieSearchText(m) + ' ' + movieDisplayName(m)).toLowerCase().includes(q));
       list.sort(LIB_SORTERS_MOVIE[libSortNow()] || LIB_SORTERS_MOVIE.az);
       el.querySelector('#libCount').textContent = `${list.length} film(s)`;
-      if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">🍿</div>Aucun film ici.</div>`; return; }
+      if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">${emojiIcon('🍿')}</div>Aucun film ici.</div>`; return; }
       grid.innerHTML = list.map(m => movieCardHtml(m)).join('');
       wireMovieButtons(grid);
       hydrateMoviePosters(grid, list);
@@ -223,7 +224,7 @@ route('library', async (el) => {
       if (q) list = list.filter(s => searchNames(s).some(n => n.includes(q)));
       list.sort(LIB_SORTERS_SHOW[libSortNow()] || LIB_SORTERS_SHOW.az);
       el.querySelector('#libCount').textContent = `${list.length} série(s)`;
-      if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">🍿</div>Aucune série ici.</div>`; return; }
+      if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">${emojiIcon('🍿')}</div>Aucune série ici.</div>`; return; }
       grid.innerHTML = list.map(s => cardHtml(s)).join('');
       grid.querySelectorAll('.show-card').forEach(c => c.onclick = () => openShow(c.dataset.key));
         hydratePosters(grid, list);
@@ -257,7 +258,18 @@ function progressBarHtml(prog) {
 }
 
 // Bouton « ⋯ » (toujours visible) : ouvre la feuille d'actions de l'œuvre (voir openCardActions).
-const MORE_BTN = '<button type="button" class="card-more" aria-label="Actions">⋯</button>';
+const MORE_BTN = `<button type="button" class="card-more" aria-label="Actions">${icon('more')}</button>`;
+// Badge doré « ★ 8,1 » (note TMDB déjà en cache, aucune requête) ; vide si la note est inconnue.
+function ratingBadgeHtml(v) {
+  v = Number(v);
+  return v > 0 ? `<span class="badge-rate" title="Note du public">★ ${v.toFixed(1).replace('.', ',')}</span>` : '';
+}
+const showVote = (s) => { const m = metaFor(s); return m && m.vote; };
+function movieVote(m) {
+  const rec = tmdbCache.movies && tmdbCache.movies[m.name];
+  const mm = rec && rec.id && tmdbCache.movieMeta && tmdbCache.movieMeta[rec.id];
+  return mm && mm.vote;
+}
 
 function cardHtml(s) {
   const seen = s.seenKeys.size;
@@ -268,7 +280,8 @@ function cardHtml(s) {
     <div class="poster" data-poster="${esc(s.key)}">
       <div class="fallback-title">${esc(name)}</div>
       ${tag ? `<span class="badge-tag">${tag}</span>` : ''}
-      ${isPinnedWatching(s) ? '<span class="badge-pin" title="Épinglée">📌</span>' : ''}
+      ${isPinnedWatching(s) ? `<span class="badge-pin" title="Épinglée">${icon('pin')}</span>` : ''}
+      ${ratingBadgeHtml(showVote(s))}
       ${MORE_BTN}
       ${seen ? `<div class="card-progress">${progressBarHtml(prog)}</div>` : ''}
     </div>
@@ -289,7 +302,7 @@ function sheetStyle(root) {
 function openActionSheet(title, items) {
   showModal(`<h2>${esc(title)}</h2>
     <div class="sheet-list">${items.map((it, i) => `<button type="button" class="sheet-item${it.on ? ' on' : ''}${it.danger ? ' danger' : ''}" data-i="${i}">
-      <span class="si-ico">${it.icon}</span><span class="si-txt">${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</span></button>`).join('')}</div>
+      <span class="si-ico">${emojiIcon(it.icon)}</span><span class="si-txt">${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</span></button>`).join('')}</div>
     <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`,
     (root) => {
       sheetStyle(root);
@@ -304,13 +317,13 @@ function sortOptionList(hideScore, withShowSorts) {
   const keys = ['az', 'za', 'recent', 'old'].concat(hideScore ? [] : ['best', 'worst'], withShowSorts ? ['lastseen', 'nextair'] : []);
   return keys.map(k => [k, SORT_LABELS[k]]);
 }
-const sortBtnHtml = (id, cur) => `<button type="button" class="pick-btn" id="${id}">Trier : ${esc(SORT_LABELS[cur] || SORT_LABELS.az)} <span class="pick-arrow">▾</span></button>`;
-const genreBtnHtml = (id, n) => `<button type="button" class="pick-btn${n ? ' on' : ''}" id="${id}">🎭 Genres${n ? ' (' + n + ')' : ''} <span class="pick-arrow">▾</span></button>`;
+const sortBtnHtml = (id, cur) => `<button type="button" class="pick-btn" id="${id}">${icon('sort')} Trier : ${esc(SORT_LABELS[cur] || SORT_LABELS.az)} <span class="pick-arrow">▾</span></button>`;
+const genreBtnHtml = (id, n) => `<button type="button" class="pick-btn${n ? ' on' : ''}" id="${id}">${icon('tag')} Genres${n ? ' (' + n + ')' : ''} <span class="pick-arrow">▾</span></button>`;
 // Tri : liste à choix unique ; un appui choisit et ferme. options = [[clé, libellé]].
 function openSortSheet(options, cur, onPick) {
   showModal(`<h2>Trier par</h2>
     <div class="sheet-list" role="radiogroup">${options.map(([k, l]) => `<button type="button" role="radio" aria-checked="${k === cur}" class="sheet-item${k === cur ? ' on' : ''}" data-k="${esc(k)}">
-      <span class="si-ico">${k === cur ? '✓' : ''}</span><span class="si-txt">${esc(l)}</span></button>`).join('')}</div>
+      <span class="si-ico">${k === cur ? icon('check') : ''}</span><span class="si-txt">${esc(l)}</span></button>`).join('')}</div>
     <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`,
     (root) => {
       sheetStyle(root);
@@ -321,7 +334,7 @@ function openSortSheet(options, cur, onPick) {
 function openGenreSheet(entries, selected, onApply, title) {
   let sel = selected.map(String);
   const rows = () => entries.map((e, i) => { const on = sel.includes(String(e.id));
-    return `<button type="button" role="checkbox" aria-checked="${on}" class="sheet-item${on ? ' on' : ''}" data-i="${i}"><span class="si-ico">${on ? '☑' : '☐'}</span>
+    return `<button type="button" role="checkbox" aria-checked="${on}" class="sheet-item${on ? ' on' : ''}" data-i="${i}"><span class="si-ico">${on ? icon('check') : ''}</span>
       <span class="si-txt">${e.ico ? e.ico + ' ' : ''}${esc(e.label)}</span>${e.n != null ? `<b class="chip-n sheet-n">${e.n}</b>` : ''}</button>`; }).join('');
   showModal(`<h2>${esc(title || 'Genres')}</h2>
     <p class="hint">Cochez plusieurs genres : il faut les avoir tous.</p>

@@ -29,13 +29,13 @@ route('home', async (el) => {
   el.innerHTML = `
     <div class="page-head"><h1>Séries</h1>${searchBtn('tv')}${acctBtn()}
       <div class="spacer"></div>
-      ${seriesTab === 'avoir' ? `<button class="btn sm ghost ${homeEditOrder ? 'primary' : ''}" id="btnReorder">${homeEditOrder ? '✓ Terminé' : '↕ Réorganiser'}</button>
-      ${archivedCount ? `<button class="btn ghost sm" id="btnArchived">⏹ Arrêtées (${archivedCount})</button>` : ''}` : ''}
+      ${seriesTab === 'avoir' ? `<button class="btn sm ghost ${homeEditOrder ? 'primary' : ''}" id="btnReorder">${homeEditOrder ? icon('check') + ' Terminé' : icon('sort') + ' Réorganiser'}</button>
+      ${archivedCount ? `<button class="btn ghost sm" id="btnArchived">${icon('stop')} Arrêtées (${archivedCount})</button>` : ''}` : ''}
     </div>
     <div class="pill-tabs" id="seriesTabs">
-      <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">📺 Mes séries</span>
-      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">🔜 Prochains</span>
-      <span class="chip ${seriesTab === 'calendrier' ? 'active' : ''}" data-stab="calendrier">📅 Calendrier</span>
+      <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">${icon('tv')} Mes séries</span>
+      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">${icon('play')} Prochains</span>
+      <span class="chip ${seriesTab === 'calendrier' ? 'active' : ''}" data-stab="calendrier">${icon('calendar')} Calendrier</span>
     </div>
     <div id="seriesBody"></div>`;
 
@@ -114,8 +114,8 @@ async function renderSeriesAvoir(el, shows) {
           <button class="ord-btn" data-move="up" data-sec="${secId}" ${pos === 0 ? 'disabled' : ''} title="Monter">▲</button>
           <button class="ord-btn" data-move="down" data-sec="${secId}" ${pos === total - 1 ? 'disabled' : ''} title="Descendre">▼</button>
         </div>` : ''}
-        <h2>${d.icon} ${d.title} <span class="sec-count">${d.list.length}</span></h2>
-        <button class="sec-info" title="${esc(d.sub)}" aria-label="À propos de cette catégorie">ℹ️</button>
+        <h2>${emojiIcon(d.icon)} ${d.title} <span class="sec-count">${d.list.length}</span></h2>
+        <button class="sec-info" title="${esc(d.sub)}" aria-label="À propos de cette catégorie">${icon('info')}</button>
       </div>
       ${d.list.length ? `<div class="grid" id="${d.id}"></div>` : `<p class="home-empty">Rien ici pour le moment.</p>`}
     </section>`;
