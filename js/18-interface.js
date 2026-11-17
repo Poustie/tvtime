@@ -278,8 +278,7 @@ function maybeShowGuide() {
 
 // ---- En-tête « intelligent » (v145) : se cache quand on descend, revient dès qu'on remonte. ----
 // L'en-tête (.page-head, 1er élément de la page) est collant ; on le décale de --hd-y (0 = visible, -hauteur = caché)
-// du même nombre de pixels que le défilement, comme la barre d'adresse d'un navigateur. Au repos, il finit de
-// s'ouvrir ou de se fermer en douceur.
+// du même nombre de pixels que le défilement, comme la barre d'adresse d'un navigateur.
 let _hd = { el: null, y: 0, last: 0, t0: 0, h: 0, idle: null, hash: null };
 function _hdSetup() {
   const app = document.getElementById('app');
@@ -315,13 +314,7 @@ function _hdScroll() {
   else _hd.y = Math.min(0, Math.max(-_hd.h, _hd.y - d));
   el.classList.remove('hd-snap');
   _hdApply();
-  // Au repos : on termine le mouvement (à moitié sorti → il revient ; à moitié caché → il disparaît).
-  clearTimeout(_hd.idle);
-  _hd.idle = setTimeout(() => {
-    if (!_hd.el || _hd.y === 0 || _hd.y === -_hd.h || window.scrollY <= _hd.t0) return;
-    _hd.y = _hd.y > -_hd.h / 2 ? 0 : -_hd.h;
-    _hd.el.classList.add('hd-snap'); _hdApply();
-  }, 140);
+  // Pas d'animation automatique : l'en-tête suit exactement le doigt (page lente = en-tête lent).
 }
 let _hdRaf = 0;
 window.addEventListener('scroll', () => { if (!_hdRaf) _hdRaf = requestAnimationFrame(() => { _hdRaf = 0; _hdScroll(); }); }, { passive: true });
