@@ -210,7 +210,7 @@ route('library', async (el) => {
       drawGenreChips(list, movieGenres);
       if (q) list = list.filter(m => (movieSearchText(m) + ' ' + movieDisplayName(m)).toLowerCase().includes(q));
       list.sort(LIB_SORTERS_MOVIE[libSortNow()] || LIB_SORTERS_MOVIE.az);
-      el.querySelector('#libCount').textContent = `${list.length} film(s)`;
+      el.querySelector('#libCount').textContent = `${list.length} ${plural(list.length, 'film', 'films')}`;
       if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">${emojiIcon('🍿')}</div>Aucun film ici.</div>`; return; }
       grid.innerHTML = list.map(m => movieCardHtml(m)).join('');
       wireMovieButtons(grid);
@@ -223,7 +223,7 @@ route('library', async (el) => {
       drawGenreChips(list, showGenres);
       if (q) list = list.filter(s => searchNames(s).some(n => n.includes(q)));
       list.sort(LIB_SORTERS_SHOW[libSortNow()] || LIB_SORTERS_SHOW.az);
-      el.querySelector('#libCount').textContent = `${list.length} série(s)`;
+      el.querySelector('#libCount').textContent = `${list.length} ${plural(list.length, 'série', 'séries')}`;
       if (!list.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="big">${emojiIcon('🍿')}</div>Aucune série ici.</div>`; return; }
       grid.innerHTML = list.map(s => cardHtml(s)).join('');
       grid.querySelectorAll('.show-card').forEach(c => c.onclick = () => openShow(c.dataset.key));

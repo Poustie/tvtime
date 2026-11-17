@@ -223,7 +223,7 @@ async function sbFollowByPseudo(pseudo) {
 // Bouton « Mon compte » (avatar) en haut à droite des 4 onglets : mène au profil, aux réglages et à la connexion.
 // Loupe de l'en-tête (Séries / Films) : ouvre la recherche unifiée. À poser à côté de acctBtn().
 function searchBtn(kind) {
-  return `<button type="button" class="search-btn" data-search="${kind}" aria-label="Rechercher">🔍</button>`;
+  return `<button type="button" class="search-btn" data-search="${kind}" aria-label="Rechercher">${icon('search')}</button>`;
 }
 function wireSearchBtn(el) {
   const b = el.querySelector('[data-search]');
@@ -389,8 +389,8 @@ function wireReviews(el, o) {
       : !sbSession ? 'Connectez-vous (Mon compte) pour que vos amis puissent le lire.'
       : (r && r.pending) ? 'Sera envoyé à vos amis dès que vous serez en ligne.' : '';
     box.innerHTML = r
-      ? `<h3>Mon avis</h3><p class="review-text">${esc(r.text)}</p><div class="rv-meta">${fmtFull(r.at)}${note ? ' · ' + note : ''}</div><button class="btn sm" id="rvEdit">✏️ Modifier</button>`
-      : `<h3>Mon avis</h3><button class="btn" id="rvEdit">✍️ Écrire un avis</button>${note ? `<div class="rv-meta">${note}</div>` : ''}`;
+      ? `<h3>Mon avis</h3><p class="review-text">${esc(r.text)}</p><div class="rv-meta">${fmtFull(r.at)}${note ? ' · ' + note : ''}</div><button class="btn sm" id="rvEdit">${icon('edit')} Modifier</button>`
+      : `<h3>Mon avis</h3><button class="btn" id="rvEdit">${icon('edit')} Écrire un avis</button>${note ? `<div class="rv-meta">${note}</div>` : ''}`;
     box.querySelector('#rvEdit').onclick = () => showMine(true);
   };
   let seen = o.seen;
@@ -411,10 +411,77 @@ function wireReviews(el, o) {
   return { setSeen(v) { if (v !== seen) { seen = v; showFriends(); } } };
 }
 
+// ---- Fil « Dernières notations » de la page Amis (avis des amis, un seul appel léger) ----
+// Source : table « reviews » (la sécurité Supabase ne renvoie que les avis de mes amis). Les réactions seules ne sont pas partagées.
+const _fdMeta = new Map(); // work → { title, poster } (titre FR + affiche, complétés depuis TMDB si absents du cache)
+async function sbFeedReviews(friends) {
+  const ids = friends.map(f => f.id).filter(isUuid);
+  if (!ids.length) return [];
+  const rows = (await sbApi('reviews?user_id=in.(' + ids.join(',') + ')&select=user_id,work,body,stars,updated_at&order=updated_at.desc&limit=30')) || [];
+  const by = new Map(friends.map(f => [f.id, f]));
+  return rows.filter(r => r && r.work && by.has(r.user_id)).map(r => Object.assign({}, r, { p: by.get(r.user_id) }));
+}
+// « tv:123:1:2 » / « mv:55 » → { kind, id, s, n }
+function parseWork(work) {
+  const m = /^(tv|mv):([0-9]+)(?::([0-9]+):([0-9]+))?$/.exec(work || '');
+  return m ? { kind: m[1] === 'tv' ? 'tv' : 'movie', id: +m[2], s: m[3] != null ? +m[3] : null, n: m[4] != null ? +m[4] : null } : null;
+}
+function feedMetaCached(w) {
+  if (w.kind === 'tv') { const x = tmdbCache.shows && tmdbCache.shows[w.id]; return x ? { title: x.name, poster: x.poster } : null; }
+  const x = tmdbCache.movieMeta && tmdbCache.movieMeta[w.id]; return x ? { title: x.title, poster: x.poster } : null;
+}
+async function feedMetaLoad(work, w) {
+  if (_fdMeta.has(work)) return _fdMeta.get(work);
+  let v = feedMetaCached(w);
+  if (!v && hasKey()) {
+    try { const d = await tmdbFetch((w.kind === 'tv' ? '/tv/' : '/movie/') + w.id); v = { title: d.name || d.title, poster: d.poster_path }; } catch {}
+  }
+  if (v) _fdMeta.set(work, v);
+  return v;
+}
+// Lien + « déjà vu ? » (anti-spoiler : l'extrait reste masqué tant que je n'ai pas vu l'œuvre)
+function feedTarget(w, look) {
+  const own = (look || ownedLookup())({ media_type: w.kind, id: w.id });
+  if (w.kind === 'movie') {
+    const m = own && (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === own);
+    return { href: own ? '#/movie/' + encodeURIComponent(own) : '#/preview/movie/' + w.id, seen: !!(m && movieStatus(m) === 'watched') };
+  }
+  const sh = own && MODEL.shows.get(own);
+  if (sh && w.s != null) return { href: '#/episode/' + encodeURIComponent(own) + '/' + w.s + '/' + w.n, seen: isSeen(sh, w.s, w.n) };
+  return { href: own ? '#/show/' + encodeURIComponent(own) : '#/preview/tv/' + w.id, seen: !!sh };
+}
+function feedCardHtml(r, look) {
+  const w = parseWork(r.work); if (!w) return '';
+  const meta = _fdMeta.get(r.work) || feedMetaCached(w) || {};
+  const t = feedTarget(w, look);
+  const po = safePoster(meta.poster);
+  const rc = reactOfScore(Math.round(Number(r.stars) || 0));
+  const ep = w.s != null ? `<span class="fd-ep">S${String(w.s).padStart(2, '0')}E${String(w.n).padStart(2, '0')}</span>` : '';
+  const body = String(r.body || '').trim();
+  const text = !body ? '' : t.seen ? `<p class="fd-text">${esc(body)}</p>` : '<p class="fd-text fd-hidden">🙈 Avis masqué jusqu’à ce que vous l’ayez vu</p>';
+  return `<a class="fd-card" href="${esc(t.href)}">
+    <div class="fd-poster">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : '<span>' + icon(w.kind === 'tv' ? 'tv' : 'film') + '</span>'}</div>
+    <div class="fd-main">
+      <div class="fd-title">${esc(meta.title || (w.kind === 'tv' ? 'Série' : 'Film'))} ${ep}</div>
+      ${rc ? `<div class="fd-rate" title="${esc(rc.label)}"><span>${rc.emoji}</span> ${esc(rc.label)} · ${Math.round(r.stars)}/5</div>` : ''}
+      ${text}
+      <div class="fd-who">${avatarHtml(r.p.avatar, r.p.pseudo)}<b>${esc(r.p.pseudo)}</b><span>${esc(fmtAgo(r.updated_at))}</span></div>
+    </div></a>`;
+}
+// Dessine le fil dans « box » ; titres / affiches manquants sont chargés puis la liste est redessinée.
+async function paintFeed(box, reviews) {
+  const draw = () => { if (!box.isConnected) return; const look = ownedLookup(); box.innerHTML = reviews.map(r => feedCardHtml(r, look)).join(''); };
+  buildModel(); draw();
+  const todo = reviews.map(r => [r.work, parseWork(r.work)]).filter(([k, w]) => w && !_fdMeta.has(k) && !feedMetaCached(w));
+  if (!todo.length) return;
+  await Promise.all(todo.map(([k, w]) => feedMetaLoad(k, w)));
+  draw();
+}
+
 route('friends', async (el) => {
   const head = `<div class="page-head"><h1>Amis</h1>${acctBtn()}</div>`;
   if (!sbSession) {
-    el.innerHTML = `${head}<div class="empty"><div class="big">👥</div><p>Pour retrouver vos amis, connectez-vous d'abord (Mon compte).</p><a class="btn primary" href="#/profile">Me connecter</a></div>`;
+    el.innerHTML = `${head}<div class="empty"><div class="big">${emojiIcon('👥')}</div><p>Pour retrouver vos amis, connectez-vous d'abord (Mon compte).</p><a class="btn primary" href="#/profile">Me connecter</a></div>`;
     return;
   }
   el.innerHTML = `${head}<p class="hint" style="color:var(--muted)">Chargement…</p>`;
@@ -427,12 +494,14 @@ route('friends', async (el) => {
     return;
   }
   if (!sbProfile) {
-    el.innerHTML = `${head}<div class="empty"><div class="big">👥</div><p>Créez d'abord votre profil (pseudo et photo) dans Mon compte.</p><a class="btn primary" href="#/profile">Créer mon profil</a></div>`;
+    el.innerHTML = `${head}<div class="empty"><div class="big">${emojiIcon('👥')}</div><p>Créez d'abord votre profil (pseudo et photo) dans Mon compte.</p><a class="btn primary" href="#/profile">Créer mon profil</a></div>`;
     return;
   }
   const { friends, incoming, outgoing } = L;
-  let recs = [];
-  try { recs = await sbLoadRecos(); } catch {}
+  const [recs, revs] = await Promise.all([
+    sbLoadRecos().catch(() => []),
+    sbFeedReviews(friends).catch(() => []),
+  ]);
   const feed = [];
   for (const f of friends) for (const g of ((f.snapshot && f.snapshot.recent) || [])) feed.push({ f, g });
   feed.sort((a, b) => String(b.g.at).localeCompare(String(a.g.at)));
@@ -440,10 +509,14 @@ route('friends', async (el) => {
   const person = (f, actions, sub) => `<div class="friend-row">${avatarHtml(f.avatar, f.pseudo)}<span style="flex:1"><b>${esc(f.pseudo)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${actions}</div>`;
   el.innerHTML = `${head}
     ${sbProfile.is_public ? '' : `<div class="panel"><p class="hint" style="color:var(--muted);margin:0">🔒 Vous êtes introuvable : vos amis ne peuvent pas vous trouver avec votre pseudo. <a href="#/profile">Me rendre trouvable</a></p></div>`}
-    ${incoming.length ? `<div class="panel fr-requests"><h3>📩 Demandes d'ami <span style="color:var(--muted);font-weight:400">· ${incoming.length}</span></h3>
+    ${incoming.length ? `<div class="panel fr-requests"><h3>${icon('mail')} Demandes d'ami <span style="color:var(--muted);font-weight:400">· ${incoming.length}</span></h3>
       ${incoming.map(f => person(f, `<button class="btn sm primary" data-accept="${esc(f.id)}">Accepter</button><button class="btn sm ghost" data-refuse="${esc(f.id)}">Refuser</button>`, 'veut être votre ami(e)')).join('')}</div>` : ''}
+    ${friends.length ? `<div class="fr-stories">${friends.map(f => `<a class="fr-story" href="#/friend/${esc(f.id)}">${avatarHtml(f.avatar, f.pseudo)}<span>${esc(f.pseudo)}</span></a>`).join('')}<button type="button" class="fr-story fr-story-add" id="frStoryAdd"><span class="avatar">＋</span><span>Ajouter</span></button></div>` : ''}
+    <section class="fd-sec"><h2 class="fd-h">Dernières notations</h2>
+      ${revs.length ? '<div class="fd-list" id="fdList"></div>' : `<div class="fd-empty"><div class="big">${emojiIcon('💬')}</div><p>${friends.length ? 'Aucune notation pour l’instant. Les avis écrits par vos amis sur un épisode ou un film apparaîtront ici.' : 'Ajoutez des amis pour voir ici ce qu’ils pensent des séries et des films.'}</p><button type="button" class="btn primary" id="frEmptyAdd">Ajouter un ami</button></div>`}
+    </section>
     ${recoSectionHtml(recs, friends)}
-    <div class="panel"><h3>Ajouter un ami</h3>
+    <div class="panel" id="frAddPanel"><h3>Ajouter un ami</h3>
       <div class="row" style="display:flex;gap:10px"><input class="input" id="frAdd" placeholder="Son pseudo" autocapitalize="off" autocomplete="off" style="flex:1"><button class="btn primary" id="frAddBtn">Envoyer</button></div>
       <span id="frAddStatus" class="sub"></span>
     </div>
@@ -451,7 +524,7 @@ route('friends', async (el) => {
       ${friends.length ? friends.map(f => `<a class="friend-row" href="#/friend/${esc(f.id)}">${avatarHtml(f.avatar, f.pseudo)}<span><b>${esc(f.pseudo)}</b><small>${esc(lastOf(f))}</small></span></a>`).join('')
         : '<p class="hint" style="color:var(--muted)">Personne pour l\'instant. Envoyez une demande avec le pseudo d\'un ami : vous serez amis quand il l\'aura acceptée.</p>'}
     </div>
-    ${outgoing.length ? `<div class="panel"><h3>⏳ Demandes envoyées</h3>
+    ${outgoing.length ? `<div class="panel"><h3>${icon('clock')} Demandes envoyées</h3>
       ${outgoing.map(f => person(f, `<button class="btn sm ghost" data-cancel="${esc(f.id)}">Annuler</button>`, 'en attente de réponse')).join('')}</div>` : ''}
     ${feed.length ? `<div class="panel"><h3>Activité des amis</h3>${feed.slice(0, 20).map(x => `<div class="feed-line"><b>${esc(x.f.pseudo)}</b> ${esc(activityText(x.g))} <span class="sub">· ${esc(fmtAgo(x.g.at))}</span></div>`).join('')}</div>` : ''}`;
   const act = (sel, fn) => el.querySelectorAll(sel).forEach(btn => btn.onclick = async () => {
@@ -460,6 +533,9 @@ route('friends', async (el) => {
     catch (e) { toast('Échec : ' + (e.message || '')); btn.disabled = false; }
     sbBusy = false;
   });
+  const goAdd = () => { const p = el.querySelector('#frAddPanel'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'center' }); const i = el.querySelector('#frAdd'); if (i) setTimeout(() => i.focus({ preventScroll: true }), 350); };
+  ['#frStoryAdd', '#frEmptyAdd'].forEach(q => { const b = el.querySelector(q); if (b) b.onclick = goAdd; });
+  const fdBox = el.querySelector('#fdList'); if (fdBox) paintFeed(fdBox, revs);
   wireRecoSection(el, recs, friends);
   act('[data-accept]', async (b) => { await sbAcceptFriend(b.dataset.accept); toast('Vous êtes maintenant amis'); });
   act('[data-refuse]', async (b) => { await sbRemoveFriend(b.dataset.refuse); toast('Demande refusée'); });
@@ -503,7 +579,7 @@ route('friend', async (el, rest) => {
       <div class="stat-card"><div class="k">Séries commencées</div><div class="v">${esc(st.shows)}</div></div>
       <div class="stat-card"><div class="k">Films vus</div><div class="v">${esc(st.movies)}</div></div></div>` : '<p class="hint" style="color:var(--muted)">Rien n\'a encore été publié.</p>'}
     ${row('▶️ En cours', s.watching, friendBar)}
-    ${s.recent && s.recent.length ? `<div class="panel"><h3>🕒 Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
+    ${s.recent && s.recent.length ? `<div class="panel"><h3>${icon('clock')} Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
     ${row('❤️ Séries favorites', s.favShows)}
     ${row('🎬 Films favoris', s.favMovies)}
     <p style="margin-top:14px"><button class="btn ghost sm" id="frUnfollow">Retirer ${esc(p.pseudo)} de mes amis</button></p>`;
@@ -569,7 +645,7 @@ function exportSharedList() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'tvtime-liste-' + new Date().toISOString().slice(0, 10) + '.json';
   a.click();
-  toast(`Liste exportée : ${shows.length} série(s), ${movies.length} film(s)`);
+  toast(`Liste exportée : ${shows.length} ${plural(shows.length, 'série', 'séries')}, ${movies.length} ${plural(movies.length, 'film', 'films')}`);
 }
 // Merge a shared list into MY OWN additions (customShows / customMovies) so the
 // items are treated as added by me (deletable) — WITHOUT overwriting anything I
@@ -619,7 +695,7 @@ async function mergeSharedList(parsed) {
   scheduleSaveState();
   MODEL = null;
   render();
-  toast(`Ajouté : ${addedShows} série(s), ${addedMovies} film(s)`);
+  toast(`Ajouté : ${addedShows} ${plural(addedShows, 'série', 'séries')}, ${addedMovies} ${plural(addedMovies, 'film', 'films')}`);
 }
 // Replace the in-memory catalogue in place (DATA is a const reference).
 // Films added by hand that are in fact a film of the history (same TMDB id, or same
@@ -717,7 +793,7 @@ function applyDataObject(obj) {
 }
 async function persistDataOverride(obj) {
   await idbSet('dataOverride', obj);
-  try { localStorage.setItem('montvtime_dataOverride', JSON.stringify(obj)); } catch {}
+  try { localStorage.setItem(LS_NS + '_dataOverride', JSON.stringify(obj)); } catch {}
 }
 // ---- Import / restauration sûrs (v133) ----
 // Clés de userState propres à CET appareil : jamais écrasées par une restauration (rappels de sauvegarde, état de la copie en ligne).
@@ -976,14 +1052,14 @@ function setRecommendedBy(key, name, fromId) {
 // Ligne « Conseillé par … » de la fiche (touche = modifier).
 function recoByHtml(key) {
   const r = recommendedByOf(key);
-  return `<button type="button" class="reco-by${r ? ' set' : ''}" id="recoBy">${r ? `💌 Conseillé par <b>${esc(r.name)}</b>` : '💌 Conseillé par…'}</button>`;
+  return `<button type="button" class="reco-by${r ? ' set' : ''}" id="recoBy">${r ? `${icon('mail')} Conseillé par <b>${esc(r.name)}</b>` : `${icon('mail')} Conseillé par…`}</button>`;
 }
 function wireRecoBy(el, key) {
   const b = el.querySelector('#recoBy'); if (b) b.onclick = () => openRecoBy(key);
 }
 function openRecoBy(key) {
   const cur = recommendedByOf(key);
-  showModal(`<h2>💌 Conseillé par</h2>
+  showModal(`<h2>${icon('mail')} Conseillé par</h2>
     <p class="hint" style="color:var(--muted)">Qui vous a donné envie de voir ça ? (facultatif)</p>
     <input class="input" id="recoName" list="recoNames" maxlength="40" placeholder="Un prénom ou un pseudo" autocomplete="off" value="${esc(cur ? cur.name : '')}">
     <datalist id="recoNames">${_sbFriendsCache.map(f => `<option value="${esc(f.pseudo)}"></option>`).join('')}</datalist>
@@ -1010,7 +1086,7 @@ async function openRecoSend(kind, tmdbId, title, poster) {
   let friends;
   try { friends = (await sbLoadFriends()).friends; } catch (e) { toast('Impossible de charger vos amis'); return; }
   if (!friends.length) { toast('Pas encore d’ami : ajoutez-en depuis l’onglet Amis'); return; }
-  showModal(`<h2>💌 Recommander à un ami</h2><p><b>${esc(title)}</b></p>
+  showModal(`<h2>${icon('mail')} Recommander à un ami</h2><p><b>${esc(title)}</b></p>
     <div class="reco-friends">${friends.map(f => `<label class="reco-friend"><input type="radio" name="recoTo" value="${esc(f.id)}"> ${avatarHtml(f.avatar, f.pseudo)} <span>${esc(f.pseudo)}</span></label>`).join('')}</div>
     <textarea class="input" id="recoMsg" maxlength="280" rows="3" placeholder="Un petit mot (facultatif, 280 caractères)"></textarea>
     <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="recoGo">Envoyer</button></div>`,
@@ -1041,7 +1117,7 @@ function recoSectionHtml(recs, friends) {
   if (!recs.length) return '';
   const name = (id) => { const f = friends.find(x => x.id === id); return f ? f.pseudo : 'un ami'; };
   const sorted = recs.slice().sort((a, b) => (a.seen === b.seen ? 0 : a.seen ? 1 : -1) || String(b.created_at).localeCompare(String(a.created_at)));
-  return `<div class="panel reco-panel"><h3>💌 Recommandé pour vous <span style="color:var(--muted);font-weight:400">· ${recs.length}</span></h3>
+  return `<div class="panel reco-panel"><h3>${icon('mail')} Recommandé pour vous <span style="color:var(--muted);font-weight:400">· ${recs.length}</span></h3>
     ${sorted.map(r => {
       const po = safePoster(r.poster);
       return `<div class="reco-row" data-id="${esc(r.id)}">

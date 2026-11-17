@@ -435,7 +435,7 @@ route('preview', async (el, rest) => {
           backdrop: meta.backdrop, poster: meta.poster, posterHtml: meta.poster ? `<img src="${IMG(meta.poster, 'w342')}" alt="">` : '<div class="ph">📺</div>',
           title: fullTitle(meta.name, meta.originalName),
           sub: esc((meta.firstAir || '').slice(0, 4)) + (meta.status ? ' · ' + esc(statusFr(meta.status)) : '') + (genres ? ' · ' + esc(genres) : ''),
-          tags: `<span class="chip">${meta.totalEpisodes || 0} épisode(s)</span>`,
+          tags: `<span class="chip">${meta.totalEpisodes || 0} ${plural(meta.totalEpisodes, 'épisode', 'épisodes')}</span>`,
         })}
         <div class="imm-body">
           <div class="detail-actions"><button class="btn primary" id="pvAdd">${icon('plus')} Ajouter à mes séries</button></div>

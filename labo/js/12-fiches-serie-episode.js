@@ -111,7 +111,7 @@ function avisCardHtml(o) {
 const regularSeenCount = (sh) => { let c = 0; for (const k of sh.seenKeys) { const p = k.split('|'); if (+p[p.length - 2] > 0) c++; } return c; };
 function showCountText(sh, meta) {
   const t = meta && meta.totalEpisodes ? airedTotal(meta) : 0;
-  return `${regularSeenCount(sh)} épisode(s) vu(s)${t ? ' / ' + t : ''}${meta && meta.totalEpisodes > t ? ` · ${meta.totalEpisodes - t} à venir` : ''}`;
+  return `${regularSeenCount(sh)} ${plural(regularSeenCount(sh), 'épisode vu', 'épisodes vus')}${t ? ' / ' + t : ''}${meta && meta.totalEpisodes > t ? ` · ${meta.totalEpisodes - t} à venir` : ''}`;
 }
 function showRewatchText(sh) { const p = rewatchPass(sh); return '🔁 Revisionnage' + (p ? ` ${p.done}/${p.total}` : ''); }
 function refreshShowHeader(sh) {
@@ -291,7 +291,7 @@ function offlineSeasons(sh) {
   const seasons = Object.keys(bySeason).sort((a, b) => a - b);
   if (!seasons.length) return `<div class="empty">Aucun épisode enregistré. Ajoutez une clé TMDB (Réglages) pour voir la liste complète des épisodes, ou utilisez « ➕ Ajouter un épisode ».</div>`;
   return `<div class="panel"><p class="hint" style="color:var(--muted)">Sans clé TMDB, seuls vos épisodes vus / ajoutés sont affichés.</p></div>` +
-    seasons.map(s => `<div class="season-head"><h3>Saison ${s}</h3><span class="count">${bySeason[s].size} épisode(s)</span></div>`).join('');
+    seasons.map(s => `<div class="season-head"><h3>Saison ${s}</h3><span class="count">${bySeason[s].size} ${plural(bySeason[s].size, 'épisode', 'épisodes')}</span></div>`).join('');
 }
 
 // Split a season's episodes into groups whenever there is a very long gap
@@ -497,7 +497,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
       ev.stopPropagation();
       const seenEps = all.filter(e => isSeen(sh, sn, e.n)), rwEps = all.filter(e => rewatchOf(sh, sn, e.n) > 0);
       if (!seenEps.length && !rwEps.length) { toast('Rien à effacer dans cette saison'); return; }
-      const ok = await askModal(`<h2>Tout marquer comme non vu ?</h2><p>${seenEps.length} épisode(s) de « ${esc(block.label)} » seront décochés${rwEps.length ? ` et leurs revisionnages (${rwEps.length} épisode(s)) effacés` : ''}.</p>`, 'Annuler', 'Tout non vu');
+      const ok = await askModal(`<h2>Tout marquer comme non vu ?</h2><p>${seenEps.length} ${plural(seenEps.length, 'épisode', 'épisodes')} de « ${esc(block.label)} » ${plural(seenEps.length, 'sera décoché', 'seront décochés')}${rwEps.length ? ` et leurs revisionnages (${rwEps.length} ${plural(rwEps.length, 'épisode', 'épisodes')}) effacés` : ''}.</p>`, 'Annuler', 'Tout non vu');
       if (!ok) return;
       const snap = snapshotEpisodes(sh, blockKeys());
       all.forEach(e => {
@@ -588,7 +588,7 @@ function celebrateCompletion(sh) {
   let spanTxt = null;
   if (wd.first && wd.last) {
     const days = Math.max(1, Math.round((Date.parse(String(wd.last).replace(' ', 'T')) - Date.parse(String(wd.first).replace(' ', 'T'))) / 86400000));
-    spanTxt = days >= 365 ? `${Math.round(days / 365 * 10) / 10} an(s)` : days >= 30 ? `${Math.round(days / 30)} mois` : `${days} j`;
+    spanTxt = days >= 365 ? `${Math.round(days / 365 * 10) / 10} ${plural(Math.round(days / 365 * 10) / 10, 'an', 'ans')}` : days >= 30 ? `${Math.round(days / 30)} mois` : `${days} j`;
   }
   const seasons = m ? m.seasons.length : 0;
   const rating = sh.showRating;
@@ -601,7 +601,7 @@ function celebrateCompletion(sh) {
       <div class="cel-stats">
         <div class="cel-stat"><b>${episodes}</b><span>épisodes vus</span></div>
         <div class="cel-stat"><b>${watchTime}</b><span>de visionnage</span></div>
-        ${spanTxt ? `<div class="cel-stat"><b>${spanTxt}</b><span>pour la terminer</span></div>` : (seasons ? `<div class="cel-stat"><b>${seasons}</b><span>saison(s)</span></div>` : '')}
+        ${spanTxt ? `<div class="cel-stat"><b>${spanTxt}</b><span>pour la terminer</span></div>` : (seasons ? `<div class="cel-stat"><b>${seasons}</b><span>${plural(seasons, 'saison', 'saisons')}</span></div>` : '')}
       </div>
       ${wd.first ? `<p class="cel-msg">Du ${fmtFull(wd.first)} au ${fmtFull(wd.last)}${showScore(sh) ? ` · Ta réaction : ${reactCaption(showScore(sh))}` : ''}</p>` : ''}
       <button class="btn primary" data-close>🎊 Génial !</button>
@@ -693,7 +693,7 @@ function offerMarkPrevious(sh, prevList, season, n) {
   const cnt = prevList.length;
   const label = epTag(sh, season, n);
   showModal(`<h2>Marquer les épisodes précédents ?</h2>
-    <p>Vous avez marqué l'épisode <strong>${label}</strong> comme vu. Voulez-vous aussi marquer les <strong>${cnt}</strong> épisode(s) précédent(s) comme vu(s) ?</p>
+    <p>Vous avez marqué l'épisode <strong>${label}</strong> comme vu. Voulez-vous aussi marquer les <strong>${cnt}</strong> ${plural(cnt, 'épisode précédent', 'épisodes précédents')} comme ${plural(cnt, 'vu', 'vus')} ?</p>
     <div class="row"><button class="btn ghost" data-close>Non, juste celui-ci</button><button class="btn primary" id="mpGo">Oui, tout marquer avant</button></div>`,
     (root) => {
       root.querySelector('#mpGo').onclick = () => {
@@ -711,7 +711,7 @@ function offerMarkPrevious(sh, prevList, season, n) {
         document.querySelectorAll('.season-head').forEach(h => { if (h._update) h._update(); }); // compteurs + « Tout vu / 🔁 Tout revu » + en-tête
         updateSyncStatus(); refreshShowHeader(sh);
         closeModal();
-        toast(`${cnt} épisode(s) marqué(s) comme vu(s)`);
+        toast(`${cnt} ${plural(cnt, 'épisode marqué', 'épisodes marqués')} comme ${plural(cnt, 'vu', 'vus')}`);
         if (isShowComplete(sh)) celebrateCompletion(sh);
       };
     });

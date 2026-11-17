@@ -94,6 +94,70 @@ route('person', async (el, rest) => {
 });
 
 //////////////////////// Profil (hub) ////////////////////////
+// Les N derniers épisodes / films vus, du plus récent au plus ancien. Dates réelles seulement (statValidDay écarte 1970 / 0001) :
+// épisodes = DATA.seen[].seenAt (export TV Time) et userState.seenAdd[clé].at (ajouts faits dans l'app) ; films = movieWatchedOf (movieWatchedAt ou export).
+function recentViews(limit) {
+  buildModel();
+  const evs = new Map();
+  for (const r of DATA.seen || []) {
+    if (r.showId == null || r.showId === '') continue;
+    const kk = epKey(r.showId, r.season, r.number);
+    if (userState.seenRemove[kk] || !statValidDay(r.seenAt)) continue;
+    const o = evs.get(kk), at = String(r.seenAt);
+    if (!o || at < o.at) evs.set(kk, { t: 'e', sk: r.showId, s: r.season, n: r.number, at });
+  }
+  for (const [kk, v] of Object.entries(userState.seenAdd || {})) {
+    if (!v || !statValidDay(v.at)) continue;
+    const p = kk.split('|');
+    evs.set(kk, { t: 'e', sk: p.slice(0, -2).join('|'), s: +p[p.length - 2], n: +p[p.length - 1], at: String(v.at) });
+  }
+  const bySh = new Map(); // une seule carte par série : son épisode vu le plus récemment + le nombre d'épisodes
+  for (const e of evs.values()) {
+    const sh = MODEL.shows.get(e.sk);
+    if (!sh || !sh.seenKeys.has(epKey(e.sk, e.s, e.n))) continue;
+    const g = bySh.get(e.sk);
+    if (!g) bySh.set(e.sk, Object.assign({}, e, { count: 1 }));
+    else { g.count++; if (e.at > g.at) Object.assign(g, { s: e.s, n: e.n, at: e.at }); }
+  }
+  const list = [...bySh.values()];
+  for (const m of (DATA.movies || []).concat(userState.customMovies || [])) {
+    if (movieStatus(m) !== 'watched' || !statValidDay(movieWatchedOf(m))) continue;
+    list.push({ t: 'm', m, at: String(movieWatchedOf(m)) });
+  }
+  list.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+  return list.slice(0, limit);
+}
+// Un épisode / film de la rangée « Récemment vus » : affiche, titre, S01E02, réaction.
+function recentCardHtml(e, i) {
+  if (e.t === 'm') {
+    const sc = movieScore(e.m), nm = movieDisplayName(e.m);
+    return `<div class="rv-card" data-rv="${i}"><div class="poster" data-mposter="${esc(e.m.name)}"><div class="fallback-title">${esc(nm)}</div></div>
+      <div class="title">${esc(nm)}</div>${sc ? '<div class="meta"><span class="rv-react">' + reactBadge(sc) + '</span></div>' : ''}</div>`;
+  }
+  const sh = MODEL.shows.get(e.sk), nm = displayName(sh), sc = epScore(epKey(e.sk, e.s, e.n));
+  const what = (e.count > 1 ? 'Dernier : ' : '') + epSE(sh, e.s, e.n);
+  return `<div class="rv-card" data-rv="${i}"><div class="poster" data-poster="${esc(sh.key)}"><div class="fallback-title">${esc(nm)}</div></div>
+    <div class="title">${esc(nm)}</div><div class="meta">${esc(what)}${sc ? ' <span class="rv-react">' + reactBadge(sc) + '</span>' : ''}</div></div>`;
+}
+// Photo + pseudo : profil Supabase s'il est chargé, sinon copie gardée sur l'appareil, sinon initiale du nom.
+function profileHeroHtml() {
+  let c = null;
+  try { c = JSON.parse(localStorage.getItem('tvtime-acct') || 'null'); } catch {}
+  const p = sbSession ? (sbProfile || c) : null;
+  const name = (p && p.pseudo) || userDisplayName() || '?';
+  const av = p ? avatarHtml(p.avatar, name, 'xl') : '<span class="avatar xl">' + esc(name.slice(0, 1).toUpperCase()) + '</span>';
+  return `<div class="acct-hero"><div class="acct-av">${av}</div><div class="acct-name">${esc(name)}</div>
+    <button class="btn sm ghost" id="acctEdit">${sbSession ? icon('edit') + ' Modifier le profil' : icon('user') + ' Se connecter'}</button></div>`;
+}
+const PROFILE_MENU = [
+  ['library', '#/library', 'Bibliothèque', 'Toutes vos œuvres — séries &amp; films'],
+  ['chart', '#/stats', 'Statistiques', 'Séries &amp; films'],
+  ['list', '#/lists', 'Listes', 'Créez et modifiez vos listes'],
+  ['palette', '#/custom', 'Personnalisation', 'Couleurs, thème, tailles, accueil'],
+  ['gear', '#/settings', 'Réglages', 'Clé TMDB, synchronisation, sauvegarde'],
+  ['sparkle', '#/changelog', 'Notes de version', 'Les nouveautés de chaque mise à jour'],
+  ['book', '#/profile', 'Revoir le guide', 'Une visite rapide de l’application', 'guideCard'],
+];
 route('profile', async (el) => {
   libBackTo = '#/profile';
   document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // Mon compte : pas de bannière de rappel
@@ -104,42 +168,52 @@ route('profile', async (el) => {
   const movies = (DATA.movies || []).concat(userState.customMovies || []);
   const moviesSeen = movies.filter(m => movieStatus(m) === 'watched').length;
   const seenCount = computeSeenCount();
+  const recent = recentViews(10);
   const favSeries = shows.filter(s => isFavShow(s)).sort((a, b) => displayName(a).localeCompare(displayName(b)));
   const favMovies = movies.filter(m => isFavMovie(m)).sort((a, b) => a.name.localeCompare(b.name));
-  const favSection = (title, icon, count, gridId, inner) => `
+  const favSection = (title, ic, count, gridId, inner) => `
     <div class="panel">
-      <h3>${icon} ${title} <span class="count" style="color:var(--muted);font-weight:400">· ${count}</span></h3>
+      <h3>${emojiIcon(ic)} ${title} <span class="count" style="color:var(--muted);font-weight:400">· ${count}</span></h3>
       ${count ? `<div class="grid" id="${gridId}">${inner}</div>` : `<p class="hint" style="color:var(--muted)">Aucun favori pour l'instant. Ouvrez une œuvre puis touchez ♡ « Ajouter aux favoris ».</p>`}
     </div>`;
+  const menu = PROFILE_MENU.map(([ic, href, t, sub, id]) => `<a class="am-row" href="${href}"${id ? ` id="${id}"` : ''}><span class="am-ic">${icon(ic)}</span><span class="am-tx"><b>${t}</b><small>${sub}</small></span><span class="am-chev">${icon('chev')}</span></a>`).join('');
   el.innerHTML = `
     ${backBtn('#/home')}
-    <div class="page-head"><h1>Mon compte</h1><span class="sub">Bonjour ${esc(userDisplayName())} 👋</span></div>
+    <div class="page-head"><h1>Mon compte</h1></div>
+    <div id="acctHero">${profileHeroHtml()}</div>
     ${sbSession ? '<div id="acctProfile"></div>' : ''}
-    ${sbPanelHtml()}
-    ${badgeCardHtml()}
-    <div class="stat-grid">
-      <div class="stat-card"><div class="k">Épisodes vus</div><div class="v">${seenCount}</div></div>
-      <div class="stat-card"><div class="k">Séries suivies</div><div class="v">${following}</div></div>
-      <div class="stat-card"><div class="k">Séries commencées</div><div class="v">${started}</div></div>
-      <div class="stat-card"><div class="k">Films vus</div><div class="v">${moviesSeen}</div></div>
-    </div>
-    <div class="profile-menu" style="margin-bottom:22px">
-      <a class="menu-card" href="#/library"><span class="ic">📚</span><b>Bibliothèque</b><small>Toutes vos œuvres — séries &amp; films</small></a>
-      <a class="menu-card" href="#/stats"><span class="ic">📊</span><b>Statistiques</b><small>Séries &amp; films</small></a>
-      <a class="menu-card" href="#/lists"><span class="ic">📃</span><b>Listes</b><small>Créez et modifiez vos listes</small></a>
-      <a class="menu-card" href="#/custom"><span class="ic">🎨</span><b>Personnalisation</b><small>Couleurs, thème, tailles, accueil</small></a>
-      <a class="menu-card" href="#/settings"><span class="ic">⚙️</span><b>Réglages</b><small>Clé TMDB, synchronisation, sauvegarde</small></a>
-      <a class="menu-card" href="#/changelog"><span class="ic">🆕</span><b>Notes de version</b><small>Les nouveautés de chaque mise à jour</small></a>
-      <a class="menu-card" href="#/profile" id="guideCard"><span class="ic">📘</span><b>Revoir le guide</b><small>Une visite rapide de l’application</small></a>
-    </div>
+    <a class="glass acct-stats" href="#/stats" aria-label="Voir les statistiques">
+      <div><b>${statFmtN(moviesSeen)}</b><span>Films vus</span></div>
+      <div><b>${statFmtN(following)}</b><span>Séries suivies</span></div>
+      <div><b>${statFmtN(seenCount)}</b><span>Épisodes vus</span></div>
+      <div><b>${statFmtN(started)}</b><span>Séries commencées</span></div>
+    </a>
+    ${recent.length ? `<div class="rv-sec"><h3>${icon('history')} Récemment vus</h3><div class="rv-row" id="rvRow">${recent.map(recentCardHtml).join('')}</div></div>` : ''}
     ${favSection('Séries favorites', '❤️', favSeries.length, 'favSeriesGrid', favSeries.map(s => cardHtml(s)).join(''))}
-    ${favSection('Films favoris', '🎬', favMovies.length, 'favMoviesGrid', favMovies.map(m => movieCardHtml(m)).join(''))}`;
+    ${favSection('Films favoris', '🎬', favMovies.length, 'favMoviesGrid', favMovies.map(m => movieCardHtml(m)).join(''))}
+    <div class="acct-quiet">${badgeCardHtml()}<div id="acctSb">${sbPanelHtml()}</div></div>
+    <div class="glass acct-menu">${menu}</div>`;
 
   sbWirePanel(el);
   const gc = el.querySelector('#guideCard');
   if (gc) gc.onclick = (ev) => { ev.preventDefault(); showGuide(0); };
   const ap = el.querySelector('#acctProfile');
-  if (ap) fillAccountProfile(ap);
+  const goEdit = () => { const t = ap || el.querySelector('#acctSb'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  const edit = el.querySelector('#acctEdit');
+  if (edit) edit.onclick = goEdit;
+  if (ap) fillAccountProfile(ap).then(() => {
+    const h = el.querySelector('#acctHero');
+    if (h && sbProfile) { h.innerHTML = profileHeroHtml(); const e2 = h.querySelector('#acctEdit'); if (e2) e2.onclick = goEdit; }
+  });
+  const rv = el.querySelector('#rvRow');
+  if (rv) {
+    rv.querySelectorAll('.rv-card').forEach(c => c.onclick = () => {
+      const e = recent[+c.dataset.rv];
+      if (e.t === 'm') openMovie(e.m.name); else if (e.count > 1) openShow(e.sk); else openEpisode(e.sk, e.s, e.n);
+    });
+    hydratePosters(rv, recent.filter(e => e.t === 'e').map(e => MODEL.shows.get(e.sk)));
+    hydrateMoviePosters(rv, recent.filter(e => e.t === 'm').map(e => e.m));
+  }
   const sg = el.querySelector('#favSeriesGrid');
   if (sg) {
     sg.querySelectorAll('.show-card').forEach(c => c.onclick = () => openShow(c.dataset.key));
@@ -161,7 +235,7 @@ route('changelog', async (el) => {
     </div>`).join('');
   el.innerHTML = `
     ${backBtn('#/profile')}
-    <div class="page-head"><h1>🆕 Notes de version</h1><span class="sub">L'historique des nouveautés de l'application</span></div>
+    <div class="page-head"><h1>${icon('sparkle')} Notes de version</h1><span class="sub">L'historique des nouveautés de l'application</span></div>
     ${entries}`;
 });
 
@@ -290,7 +364,7 @@ function statPerMonthHtml(D) {
   return months.map(k => statBarRow(STAT_MONTHS[+k.slice(5) - 1] + ' ' + k.slice(0, 4), D.byMonth[k], max)).join('');
 }
 function statRecordsHtml(D) {
-  const row = (ic, k, v) => `<div class="rec-row"><span class="rec-ic">${ic}</span><span class="rec-k">${k}</span><span class="rec-v">${v}</span></div>`;
+  const row = (ic, k, v) => `<div class="rec-row"><span class="rec-ic">${emojiIcon(ic)}</span><span class="rec-k">${k}</span><span class="rec-v">${v}</span></div>`;
   const shows = Array.from(MODEL.shows.values());
   const top = shows.filter(s => s.seenKeys.size).sort((a, b) => b.seenKeys.size - a.seenKeys.size)[0];
   const rwEntry = Object.entries(D.rewatchByShow).sort((a, b) => b[1] - a[1])[0];
@@ -364,10 +438,10 @@ function badgesHtml(groups) {
   return groups.map(g => {
     const got = g.tiers.filter(t => g.value >= t);
     const nt = g.tiers.find(t => g.value < t);
-    const chips = got.map(t => { const d = g.date(t); return `<span class="bdg">🏅 ${esc(g.label(t))}${d ? `<small>${fmtFull(d)}</small>` : ''}</span>`; }).join('');
+    const chips = got.map(t => { const d = g.date(t); return `<span class="bdg">${icon('medal')} ${esc(g.label(t))}${d ? `<small>${fmtFull(d)}</small>` : ''}</span>`; }).join('');
     const pct = nt ? Math.min(100, Math.round(g.value / nt * 100)) : 100;
     return `<div class="bdg-group">
-      <div class="bdg-head"><span>${g.ic} ${esc(g.title)}</span><b>${statFmtN(g.value)}${g.unit}</b></div>
+      <div class="bdg-head"><span>${emojiIcon(g.ic)} ${esc(g.title)}</span><b>${statFmtN(g.value)}${g.unit}</b></div>
       <div class="bdg-got">${chips || '<span class="hint">Pas encore de badge ici.</span>'}</div>
       ${nt ? `<div class="bdg-next"><span class="bdg-nt">Prochain : ${esc(g.label(nt))}</span><span class="sb-track"><i class="e" style="width:${pct}%"></i></span><span class="bdg-prog">${statFmtN(g.value)} / ${statFmtN(nt)}${g.unit}</span></div>` : '<div class="bdg-next"><span class="bdg-nt">🎉 Tous les badges de cette série sont obtenus.</span></div>'}
     </div>`;
@@ -378,7 +452,7 @@ function badgeCardHtml() {
   const s = badgeSummary(computeBadges(computeStatsData()));
   const nx = s.next;
   return `<a class="panel badge-card" href="#/stats">
-    <div class="bdg-head"><span>🏅 Mes badges</span><b>${s.got} / ${s.total}</b></div>
+    <div class="bdg-head"><span>${icon('medal')} Mes badges</span><b>${s.got} / ${s.total}</b></div>
     ${nx ? `<div class="bdg-next"><span class="bdg-nt">Prochain : ${esc(nx.g.label(nx.nt))}</span><span class="sb-track"><i class="e" style="width:${Math.min(100, Math.round(nx.ratio * 100))}%"></i></span><span class="bdg-prog">${statFmtN(nx.g.value)} / ${statFmtN(nx.nt)}${nx.g.unit}</span></div>` : '<p class="hint" style="margin:6px 0 0">Tous les badges sont obtenus.</p>'}
     <small class="muted">Voir tous les badges →</small></a>`;
 }
@@ -392,19 +466,19 @@ function statsPlusHtml(D) {
       <div class="yr-chips"><button class="chip active" data-y="${cy}">${cy}</button><button class="chip" data-y="${cy - 1}">${cy - 1}</button></div>
       <div id="statBilanBody">${statYearReviewHtml(D, String(cy))}</div>
     </details>
-    <details class="panel stat-sec" open><summary><h3>🏅 Badges</h3></summary>
+    <details class="panel stat-sec" open><summary><h3>${icon('medal')} Badges</h3></summary>
       <p class="hint stat-help">Calculés à partir de votre historique. Les dates sont approximatives quand certains épisodes n’ont pas de date.</p>
       ${badgesHtml(groups)}
     </details>
-    <details class="panel stat-sec" open><summary><h3>🗓️ Temps de visionnage par mois</h3></summary>
+    <details class="panel stat-sec" open><summary><h3>${icon('calendar')} Temps de visionnage par mois</h3></summary>
       <p class="hint stat-help"><i class="sb-key e"></i> épisodes <i class="sb-key m"></i> films · 12 derniers mois</p>
       ${statPerMonthHtml(D)}
     </details>
-    <details class="panel stat-sec" open><summary><h3>📅 Temps de visionnage par année</h3></summary>
+    <details class="panel stat-sec" open><summary><h3>${icon('calendar')} Temps de visionnage par année</h3></summary>
       <p class="hint stat-help"><i class="sb-key e"></i> épisodes <i class="sb-key m"></i> films. Durées estimées : ${DEFAULT_RUNTIME} min par épisode et ${MOVIE_DEFAULT_RUNTIME} min par film quand la durée réelle est inconnue.${(D.bulkDays || []).length ? ` ${D.bulkDays.length} jour${D.bulkDays.length > 1 ? 's' : ''} (dont le ${fmtFull(D.bulkDays[0].day)}, ${statFmtN(D.bulkDays[0].n)} épisodes) ${D.bulkDays.length > 1 ? 'ont' : 'a'} trop d’épisodes pour une seule journée : ce sont sûrement des cochages en lot ou l’import de TV Time. Ils sont comptés dans leur année mais pas dans les records.` : ''}${undated ? ` ${statFmtN(undated)} épisode${undated > 1 ? 's' : ''} sans date ne sont pas comptés ici.` : ''}</p>
       ${statPerYearHtml(D)}
     </details>
-    <details class="panel stat-sec" open><summary><h3>🏆 Records</h3></summary>
+    <details class="panel stat-sec" open><summary><h3>${icon('trophy')} Records</h3></summary>
       ${statRecordsHtml(D)}
     </details>`;
 }
@@ -484,7 +558,7 @@ route('stats', async (el) => {
     ${backBtn('#/profile')}
     <div class="page-head"><h1>Statistiques</h1><span class="sub">Bonjour ${esc(userDisplayName())} 👋</span></div>
     ${statsPlusHtml(SD)}
-    <div class="page-head" style="margin-top:6px"><h1>📺 Séries</h1><span class="sub">Vos statistiques séries</span></div>
+    <div class="page-head" style="margin-top:6px"><h1>${icon('tv')} Séries</h1><span class="sub">Vos statistiques séries</span></div>
     <div class="stat-grid">
       <div class="stat-card"><div class="k">Épisodes vus</div><div class="v">${seenCount}</div></div>
       <div class="stat-card"><div class="k">Temps de visionnage</div><div class="v">${days}<small> j</small> ${hrs}<small> h</small></div></div>
@@ -495,7 +569,7 @@ route('stats', async (el) => {
     <p class="hint stat-help">« Réactions » = nombre d’épisodes auxquels une réaction est associée (celles de TV Time et les vôtres). Le détail est plus bas, dans « Réactions importées de TV Time ».</p>
     ${!hasKey() ? `<div class="panel"><p style="color:var(--muted);margin:0">⏱️ Le temps de visionnage est estimé à ${DEFAULT_RUNTIME} min/épisode. Ajoutez une clé TMDB (Réglages) puis « Synchroniser » pour des durées exactes.</p></div>` : ''}
 
-    <div class="panel"><h3>🏆 Top séries (épisodes vus)</h3>
+    <div class="panel"><h3>${icon('trophy')} Top séries (épisodes vus)</h3>
       ${top.map(s => barRow(esc(s.name), s.seenKeys.size, maxTop)).join('') || '<p class="hint">—</p>'}
     </div>
     <div class="panel"><h3>😍 Réactions importées de TV Time</h3>
@@ -510,11 +584,11 @@ route('stats', async (el) => {
       <p class="hint" style="color:var(--muted);margin:.2rem 0 .6rem">Votre réaction sur la fiche de chaque série, de 👎 1/5 à 🤩 5/5.</p>
       ${ratedShows ? [5, 4, 3, 2, 1].map(v => barRow(`${reactOfScore(v).emoji} ${reactOfScore(v).label} · ${v}/5`, showRatingCounts[v], Math.max(1, ...Object.values(showRatingCounts)))).join('') : '<p class="hint">Aucune note pour l\'instant.</p>'}
     </div>
-    <div class="panel"><h3>📅 Activité par année</h3>
+    <div class="panel"><h3>${icon('calendar')} Activité par année</h3>
       ${years.map(y => barRow(y, byYear[y], Math.max(...years.map(z => byYear[z])))).join('') || '<p class="hint">—</p>'}
     </div>
 
-    <div class="page-head" style="margin-top:22px"><h1>🎬 Films</h1><span class="sub">Vos statistiques cinéma</span></div>
+    <div class="page-head" style="margin-top:22px"><h1>${icon('film')} Films</h1><span class="sub">Vos statistiques cinéma</span></div>
     <div class="stat-grid">
       <div class="stat-card"><div class="k">Films vus</div><div class="v">${moviesWatched.length}</div></div>
       <div class="stat-card"><div class="k">Temps de visionnage</div><div class="v">${movDays}<small> j</small> ${movHrs}<small> h</small></div></div>
@@ -535,7 +609,7 @@ route('stats', async (el) => {
       <p class="hint" style="color:var(--muted);margin:.2rem 0 .6rem">Votre réaction sur la fiche de chaque film (y compris celles importées de TV Time), de 👎 1/5 à 🤩 5/5.</p>
       ${myRatedMovies ? [5, 4, 3, 2, 1].map(v => barRow(`${reactOfScore(v).emoji} ${reactOfScore(v).label} · ${v}/5`, movMyRatingCounts[v], Math.max(1, ...Object.values(movMyRatingCounts)))).join('') : '<p class="hint">Aucune note pour l\'instant.</p>'}
     </div>
-    <div class="panel"><h3>📅 Films vus par année</h3>
+    <div class="panel"><h3>${icon('calendar')} Films vus par année</h3>
       ${movYears.length ? movYears.map(y => barRow(y, movByYear[y], Math.max(...movYears.map(z => movByYear[z])))).join('') : '<p class="hint">Les dates de visionnage sont enregistrées à partir de maintenant, quand vous marquez un film comme vu.</p>'}
     </div>`;
   wireStatsPlus(el, SD);
@@ -556,18 +630,18 @@ route('lists', async (el) => {
     const lists = getUserLists();
     el.innerHTML = `
       ${backBtn('#/profile')}
-      <div class="page-head"><h1>Listes</h1><span class="sub">${lists.length} liste(s)</span>
-        <div class="spacer"></div><button class="btn primary" id="newList">＋ Nouvelle liste</button></div>
-      ${lists.length ? '' : `<div class="empty"><div class="big">📃</div>Aucune liste. Créez-en une, puis ajoutez des séries et des films depuis leur fiche (« Ajouter à une liste »).</div>`}
+      <div class="page-head"><h1>Listes</h1><span class="sub">${lists.length} ${plural(lists.length, 'liste', 'listes')}</span>
+        <div class="spacer"></div><button class="btn primary" id="newList">${icon('plus')} Nouvelle liste</button></div>
+      ${lists.length ? '' : `<div class="empty"><div class="big">${emojiIcon('📃')}</div>Aucune liste. Créez-en une, puis ajoutez des séries et des films depuis leur fiche (« Ajouter à une liste »).</div>`}
       ${lists.map(l => {
         const shows = (l.shows || []).map(k => MODEL.shows.get(k)).filter(Boolean);
         const movies = (l.movies || []).map(n => movieByName[n]).filter(Boolean);
         const n = shows.length + movies.length;
         return `<div class="panel">
-          <h3>${esc(l.name)} <span class="count" style="color:var(--muted);font-weight:400">· ${n} élément(s)</span>
+          <h3>${esc(l.name)} <span class="count" style="color:var(--muted);font-weight:400">· ${n} ${plural(n, 'élément', 'éléments')}</span>
             <span style="float:right;display:flex;gap:6px">
-              <button class="btn sm" data-rename="${esc(l.id)}">✏️ Renommer</button>
-              <button class="btn sm danger" data-dellist="${esc(l.id)}">🗑 Supprimer</button>
+              <button class="btn sm" data-rename="${esc(l.id)}">${icon('edit')} Renommer</button>
+              <button class="btn sm danger" data-dellist="${esc(l.id)}">${icon('trash')} Supprimer</button>
             </span></h3>
           ${n ? `<div class="grid">
             ${shows.map(s => `<div class="list-item" data-open-show="${esc(s.key)}">${cardHtml(s)}<button class="list-remove" data-rmshow="${esc(l.id)}|${esc(s.key)}" title="Retirer de la liste">✕</button></div>`).join('')}
@@ -655,7 +729,7 @@ route('settings', async (el) => {
     <div class="page-head"><h1>Réglages</h1></div>
     <div class="panel">
       <h3>Affichage</h3>
-      <p class="hint" style="color:var(--muted);margin:0">Couleurs, thème clair ou noir, tailles, onglet d'ouverture… : <a href="#/custom">🎨 Personnalisation</a>.</p>
+      <p class="hint" style="color:var(--muted);margin:0">Couleurs, thème clair ou noir, tailles, onglet d'ouverture… : <a href="#/custom">${icon('palette')} Personnalisation</a>.</p>
     </div>
     <div class="panel">
       <div class="settings-field">
@@ -703,7 +777,7 @@ route('settings', async (el) => {
       <p class="hint" style="color:var(--muted)"><b>TV Time</b> · version ${APP_VERSION}<br>
       Données importées le ${esc((DATA.generatedAt || '').replace('T', ' '))}. Compte : ${esc(DATA.user?.mail || '')}.<br>
       ${(DATA.shows || []).length} séries · ${(DATA.seen || []).length} épisodes vus · ${((DATA.emotions || []).length + (DATA.episodeRatings || []).length)} réactions.</p>
-      <p style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn ghost sm" href="#/changelog">🆕 Notes de version</a><button class="btn ghost sm" id="guideBtn" type="button">📘 Revoir le guide</button></p>
+      <p style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn ghost sm" href="#/changelog">${icon('sparkle')} Notes de version</a><button class="btn ghost sm" id="guideBtn" type="button">${icon('book')} Revoir le guide</button></p>
     </div>`;
 
   el.querySelector('#guideBtn').onclick = () => showGuide(0);

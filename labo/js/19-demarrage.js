@@ -41,7 +41,7 @@
   applyTmdbOverrides();
   try { repairSeenAddDup(); } catch (e) { console.warn('repairSeenAddDup', e); }
   const mergedDup = reconcileDuplicateMovies();
-  if (mergedDup) setTimeout(() => toast(`${mergedDup} film(s) ajouté(s) à la main fusionné(s) avec votre historique`), 1500);
+  if (mergedDup) setTimeout(() => toast(`${mergedDup} ${plural(mergedDup, 'film ajouté à la main fusionné', 'films ajoutés à la main fusionnés')} avec votre historique`), 1500);
   updateSyncStatus();
   applyTheme();
   if (!location.hash) location.hash = startHash(); // onglet d'ouverture choisi (Personnalisation)

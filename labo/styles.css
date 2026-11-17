@@ -932,6 +932,9 @@ a.badge-card .muted { color: var(--muted); display: block; margin-top: 8px; font
 .reco-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .reco-btns .btn { min-height: 44px; }
 
+/* Page zoomée au pincement : déplacement libre dans toutes les directions (posé par 11-glissement.js) */
+html.zoomed, html.zoomed body { touch-action: manipulation; overscroll-behavior-x: auto; }
+
 /* ===== Lot 8-A : navigation / glissement (dev A uniquement) ===== */
 /* La page qui glisse dépasse de l'écran : sans ceci, le navigateur mobile « dézoome » la page pendant le geste (largeur de mise en page agrandie). */
 html, body { overflow-x: clip; }

@@ -630,7 +630,7 @@ route('lists', async (el) => {
     const lists = getUserLists();
     el.innerHTML = `
       ${backBtn('#/profile')}
-      <div class="page-head"><h1>Listes</h1><span class="sub">${lists.length} liste(s)</span>
+      <div class="page-head"><h1>Listes</h1><span class="sub">${lists.length} ${plural(lists.length, 'liste', 'listes')}</span>
         <div class="spacer"></div><button class="btn primary" id="newList">${icon('plus')} Nouvelle liste</button></div>
       ${lists.length ? '' : `<div class="empty"><div class="big">${emojiIcon('📃')}</div>Aucune liste. Créez-en une, puis ajoutez des séries et des films depuis leur fiche (« Ajouter à une liste »).</div>`}
       ${lists.map(l => {
@@ -638,7 +638,7 @@ route('lists', async (el) => {
         const movies = (l.movies || []).map(n => movieByName[n]).filter(Boolean);
         const n = shows.length + movies.length;
         return `<div class="panel">
-          <h3>${esc(l.name)} <span class="count" style="color:var(--muted);font-weight:400">· ${n} élément(s)</span>
+          <h3>${esc(l.name)} <span class="count" style="color:var(--muted);font-weight:400">· ${n} ${plural(n, 'élément', 'éléments')}</span>
             <span style="float:right;display:flex;gap:6px">
               <button class="btn sm" data-rename="${esc(l.id)}">${icon('edit')} Renommer</button>
               <button class="btn sm danger" data-dellist="${esc(l.id)}">${icon('trash')} Supprimer</button>

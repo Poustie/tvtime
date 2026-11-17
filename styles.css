@@ -932,6 +932,9 @@ a.badge-card .muted { color: var(--muted); display: block; margin-top: 8px; font
 .reco-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .reco-btns .btn { min-height: 44px; }
 
+/* Page zoomée au pincement : déplacement libre dans toutes les directions (posé par 11-glissement.js) */
+html.zoomed, html.zoomed body { touch-action: manipulation; overscroll-behavior-x: auto; }
+
 /* ===== Lot 8-A : navigation / glissement (dev A uniquement) ===== */
 /* La page qui glisse dépasse de l'écran : sans ceci, le navigateur mobile « dézoome » la page pendant le geste (largeur de mise en page agrandie). */
 html, body { overflow-x: clip; }
@@ -963,3 +966,39 @@ html, body { overflow-x: clip; }
 /* Onglets de la Bibliothèque : retour à la ligne propre, jamais de défilement sur le côté. */
 #libTabs { gap: 6px; }
 #libTabs .chip { white-space: nowrap; padding: 6px 10px; }
+
+/* ===== UI labo : barre du bas en « verre liquide » (bulle flottante TRÈS transparente, icônes à la couleur choisie) ===== */
+.bottom-nav {
+  left: 14px; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 7px 4px 8px;
+  border-radius: 30px; border: 1px solid rgba(255,255,255,.16); border-top: 1px solid rgba(255,255,255,.16);
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01));
+  -webkit-backdrop-filter: blur(6px) saturate(170%); backdrop-filter: blur(6px) saturate(170%);
+  box-shadow: 0 8px 24px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.20), inset 0 -1px 0 rgba(255,255,255,.05);
+}
+.bottom-nav::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 40%); }
+html.amoled .bottom-nav { background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); }
+.bottom-nav a { gap: 4px; padding: 2px 2px 3px; color: rgba(255,255,255,.66); -webkit-tap-highlight-color: transparent;
+  text-shadow: 0 1px 3px rgba(0,0,0,.55); }
+.bottom-nav a .bn-ic {
+  width: calc(40px * var(--fs, 1)); height: calc(32px * var(--fs, 1)); border-radius: calc(16px * var(--fs, 1));
+  display: grid; place-items: center; font-size: 0; opacity: 1; filter: none; background: transparent;
+  transition: transform .22s cubic-bezier(.2,.8,.2,1), background .22s ease, box-shadow .22s ease;
+}
+.bn-ic svg { width: calc(23px * var(--fs, 1)); height: calc(23px * var(--fs, 1)); fill: none; stroke: var(--accent-ink, var(--accent));
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .62;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); transition: opacity .22s ease; }
+.bn-ic svg .f { fill: var(--accent-ink, var(--accent)); stroke: none; }
+.bottom-nav a.active { color: var(--accent-ink, var(--accent)); }
+.bottom-nav a.active .bn-ic { transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 0 16px color-mix(in srgb, var(--accent) 35%, transparent); }
+.bottom-nav a.active .bn-ic svg { opacity: 1; }
+.bottom-nav a:active .bn-ic { transform: scale(.9); }
+html.light .bottom-nav { background: linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,.12)); border-color: rgba(0,0,0,.08);
+  box-shadow: 0 10px 28px rgba(20,30,45,.14), inset 0 1px 0 rgba(255,255,255,.9); }
+html.light .bottom-nav a { color: rgba(20,24,32,.62); text-shadow: none; } html.light .bottom-nav a.active { color: var(--accent-ink, var(--accent)); }
+html.light .bn-ic svg { filter: none; }
+main { padding-bottom: max(118px, calc(env(safe-area-inset-bottom) + 104px)); }
+/* Version de test : fine bande orange en haut de l'écran */
+html.labo body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 999; background: #ff8a00; pointer-events: none; }

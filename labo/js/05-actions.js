@@ -160,7 +160,7 @@ function showAboutHtml(sh, meta) {
   const wd = showWatchDates(sh);
   const seen = sh.seenKeys.size;
   const watchInfo = seen
-    ? `${seen} épisode(s) vu(s)` + (wd.first ? ` · du ${fmtFull(wd.first)}` + (wd.last && wd.last !== wd.first ? ` au ${fmtFull(wd.last)}` : '') : '')
+    ? `${seen} ${plural(seen, 'épisode vu', 'épisodes vus')}` + (wd.first ? ` · du ${fmtFull(wd.first)}` + (wd.last && wd.last !== wd.first ? ` au ${fmtFull(wd.last)}` : '') : '')
     : '';
   const rows = [
     infoRow('Genre', meta.genres.length ? esc(meta.genres.join(', ')) : ''),

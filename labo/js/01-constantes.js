@@ -15,6 +15,17 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 69, date: '17 novembre 2026', title: 'Nouveau look', items: [
+    'Barre du bas en « verre » transparent, avec des icônes dessinées à votre couleur. Les emojis des boutons, onglets et menus sont remplacés par des icônes dessinées.',
+    'Fiches des séries et des films : grande image en haut, titre en gros, et une carte « Votre avis » avec vos 5 réactions et la note moyenne du public.',
+    'Affiches : coins arrondis et note du public en doré (« ★ 8,1 »). Dans Personnalisation, vous choisissez où la placer, ou vous la masquez. Le badge « Favori » disparaît des affiches.',
+    'Bouton ⋯ des affiches : trois points bien visibles, même sur une affiche claire. Vous pouvez le masquer dans Personnalisation ; un appui long sur l’affiche fait la même chose.',
+    'Mon compte : grande photo, 4 chiffres clés, « Récemment vus » (une affiche par série) et un menu façon réglages.',
+    'Amis : rangée de photos de vos amis et fil « Dernières notations » avec leurs avis.',
+    'Séries : les séries arrêtées forment une catégorie « Arrêtées » que l’on peut réorganiser ou masquer, comme les autres.',
+    'Zoom : on peut zoomer avec deux doigts puis se déplacer dans la page, de haut en bas et de gauche à droite.',
+    'Écriture plus aérée, petites animations au toucher, et textes accordés (« 1 épisode vu », « 2 épisodes vus »).',
+  ] },
   { id: 68, date: '16 novembre 2026', title: 'En-tête qui reste en place', items: [
     'En glissant d’une page à l’autre, tout le haut de la page reste en place (titre, nombre de films, « Réorganiser », « Arrêtées », tri…) : il se transforme en douceur en celui de la page suivante.',
     'Titres « Explorer » et « Amis » sans symbole, comme « Séries » et « Films ». Explorer : « Par genre » retiré (le bouton Genres suffit).',
@@ -455,6 +466,8 @@ function emojiIcon(e, cls = '') {
   return icon(name, [cls, f].filter(Boolean).join(' '));
 }
 // leadIcon('🔥 Séries du moment') → svg + « Séries du moment » (seul le 1er emoji, s'il est connu).
+// Accord singulier / pluriel : plural(n, 'épisode vu', 'épisodes vus') ; 0 et 1 → singulier.
+function plural(n, un, plus) { return Math.abs(Number(n) || 0) >= 2 ? plus : un; }
 function leadIcon(s) {
   const m = /^(\S+)\s+([\s\S]*)$/.exec(String(s)); if (!m) return s;
   const k = m[1].replace(/️/g, '');

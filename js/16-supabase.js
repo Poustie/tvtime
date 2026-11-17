@@ -6,7 +6,7 @@
 // publique par conception : c'est la sécurité côté Supabase (RLS) qui protège les fichiers.
 const SB_URL = 'https://loezmygglibdubyyoxpy.supabase.co';
 const SB_KEY = 'sb_publishable_Idw7zdQ4VXLJ1Rdql3SClw_lYYXAjnR';
-const SB_SESSION_KEY = 'tvtime-sb-session';
+const SB_SESSION_KEY = LABO ? 'tvtime-labo-sb-session' : 'tvtime-sb-session'; // labo : jamais connecté au vrai compte
 let sbSession = null; // { at, rt, exp, uid, email } — gardé hors de userState pour ne pas finir dans les sauvegardes
 try { sbSession = JSON.parse(localStorage.getItem(SB_SESSION_KEY) || 'null'); } catch {}
 let sbPendingEmail = null; // e-mail en attente de saisie du code
@@ -16,6 +16,7 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
 let sbProfile = null; // mon profil (communauté) : { pseudo, is_public, avatar, updated_at } — null = pas encore créé
 function sbStoreSession(s) {
+  if (LABO && s) { toast('🧪 Version de test : la connexion au compte est désactivée.'); return; }
   sbSession = s;
   if (s) document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // connecté : plus de rappel de sauvegarde
   if (!s) {

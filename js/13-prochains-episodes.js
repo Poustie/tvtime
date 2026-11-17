@@ -143,20 +143,20 @@ async function renderUpnext(el) {
     const hasEp = e.s != null;
     const spoil = antiSpoiler() && e.name && !(hasEp && isSeen(sh, e.s, e.n));
     const title = hasEp ? (e.name || 'Épisode ' + epDisp(sh, e.s, e.n).n) : '';
-    let when;
+    let when, wIc = '';
     if (group === 'soon') {
       const d = daysFromToday(e.air);
       when = d <= 1 ? relDay(e.air) : `${relDay(e.air)} · ${inDays(e.air)}`;
-      when = '📅 ' + when;
-    } else if (info.rewatch) when = '🔁 À revoir';
-    else when = e.air ? `${group === 'new' ? '🆕 ' : ''}Sorti ${relDay(e.air)}` : 'Disponible';
+      wIc = icon('calendar') + ' ';
+    } else if (info.rewatch) { when = 'À revoir'; wIc = icon('repeat') + ' '; }
+    else { when = e.air ? `Sorti ${relDay(e.air)}` : 'Disponible'; if (group === 'new') wIc = icon('sparkle') + ' '; }
     const left = group !== 'soon' && info.remaining > 0 ? ` · ${info.remaining} restant${info.remaining > 1 ? 's' : ''}` : '';
     return `<div class="upnext-row" data-key="${esc(sh.key)}">
       <div class="poster">${posterHtml(sh, info.poster)}</div>
       <div class="info">
         <div class="sname">${esc(displayName(sh))}</div>
         ${hasEp ? `<div class="ename"><b>${epTag(sh, e.s, e.n)}</b> · <span class="${spoil ? 'spoil-name' : ''}">${esc(title)}</span></div>` : ''}
-        <div class="when">${esc(when + left)}</div>
+        <div class="when">${wIc}${esc(when + left)}</div>
       </div>
       ${group !== 'soon' ? `<button class="btn sm ghost up-mark" data-mark title="${info.rewatch ? 'Compter un revisionnage' : 'Marquer comme vu'}">${info.rewatch ? '🔁 Revu' : '✓ Vu'}</button>` : ''}
     </div>`;
@@ -170,14 +170,14 @@ async function renderUpnext(el) {
     const n = entries.length, silent = silentSet.size;
     setSub(n ? `${n} série${n > 1 ? 's' : ''} avec un épisode à regarder` : 'Prochain épisode de vos séries en cours');
     if (!n && !silent) { listEl.innerHTML = `<div class="empty"><div class="big">🎉</div>Rien à regarder pour l’instant.<br><small>Commencez une série ou épinglez-en une pour la voir ici.</small></div>`; return; }
-    listEl.innerHTML = UPNEXT_GROUPS.map(([g, icon, title, hint]) => {
+    listEl.innerHTML = UPNEXT_GROUPS.map(([g, ico, title, hint]) => {
       const rows = entries.filter(r => r.group === g).sort((a, b) => sortGroup(g, a, b));
       if (!rows.length) return '';
       return g === 'pause'
-        ? `<section class="up-group up-pause"><button type="button" class="up-pause-head" aria-expanded="${_upPauseOpen}"><h2>${icon} ${title} <span class="sec-count">${rows.length}</span></h2><span class="caret">${_upPauseOpen ? '▾' : '▸'}</span></button>
+        ? `<section class="up-group up-pause"><button type="button" class="up-pause-head" aria-expanded="${_upPauseOpen}"><h2>${emojiIcon(ico)} ${title} <span class="sec-count">${rows.length}</span></h2><span class="caret">${_upPauseOpen ? '▾' : '▸'}</span></button>
         <div class="up-pause-body"${_upPauseOpen ? '' : ' hidden'}>${rows.map(rowHtml).join('')}</div></section>`
-        : `<section class="up-group"><div class="home-head"><h2>${icon} ${title} <span class="sec-count">${rows.length}</span></h2>
-        <button class="sec-info" title="${esc(hint)}" aria-label="À propos de ce groupe" data-hint="${esc(hint)}">ℹ️</button></div>
+        : `<section class="up-group"><div class="home-head"><h2>${emojiIcon(ico)} ${title} <span class="sec-count">${rows.length}</span></h2>
+        <button class="sec-info" title="${esc(hint)}" aria-label="À propos de ce groupe" data-hint="${esc(hint)}">${icon('info')}</button></div>
         ${rows.map(rowHtml).join('')}</section>`;
     }).join('') + (n ? '' : `<div class="empty"><div class="big">🎉</div>Vous êtes à jour !</div>`) +
       (silent ? `<p class="up-foot">${silent} série${silent > 1 ? 's' : ''} à jour sans date annoncée</p>` : '');
@@ -331,7 +331,7 @@ async function renderCalendar(el) {
     const n = keys.reduce((t, k) => t + days.get(k).length, 0);
     setSub(n ? `${n} épisode${n > 1 ? 's' : ''} à venir dans les ${CAL_AHEAD} prochains jours` : 'Sorties des 30 prochains jours de vos séries');
     let html = '';
-    if (past.length) html += `<section class="up-group up-pause"><button type="button" class="up-pause-head" aria-expanded="${_calPastOpen}"><h2>🕘 Ces ${CAL_PAST} derniers jours <span class="sec-count">${past.length}</span></h2><span class="caret">${_calPastOpen ? '▾' : '▸'}</span></button>
+    if (past.length) html += `<section class="up-group up-pause"><button type="button" class="up-pause-head" aria-expanded="${_calPastOpen}"><h2>${icon('clock')} Ces ${CAL_PAST} derniers jours <span class="sec-count">${past.length}</span></h2><span class="caret">${_calPastOpen ? '▾' : '▸'}</span></button>
       <div class="up-pause-body"${_calPastOpen ? '' : ' hidden'}>${past.map(x => rowHtml(x, true)).join('')}</div></section>`;
     for (const k of keys) {
       const d = dayNumOf(k) - today;
@@ -339,7 +339,7 @@ async function renderCalendar(el) {
       const rows = days.get(k).sort(bySeries);
       html += `<section class="up-group cal-day"><div class="home-head"><h2>${esc(title)} <span class="sec-count">${rows.length}</span></h2></div>${rows.map(x => rowHtml(x, false)).join('')}</section>`;
     }
-    if (!n) html += `<div class="empty"><div class="big">📅</div>Aucune sortie prévue dans les ${CAL_AHEAD} prochains jours pour vos séries.</div>`;
+    if (!n) html += `<div class="empty"><div class="big">${emojiIcon('📅')}</div>Aucune sortie prévue dans les ${CAL_AHEAD} prochains jours pour vos séries.</div>`;
     listEl.innerHTML = html;
     listEl.querySelectorAll('.cal-row').forEach(row => row.onclick = () => openEpisode(row.dataset.key, +row.dataset.s, +row.dataset.n));
     const ph = listEl.querySelector('.up-pause-head');

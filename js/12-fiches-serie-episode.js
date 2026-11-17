@@ -18,33 +18,28 @@ route('show', async (el, rest) => {
   const genres = meta ? meta.genres.join(' · ') : '';
   el.innerHTML = `
     ${backBtn('#/home')}
-    <div class="detail-hero title-top" style="margin-top:12px">
-      <div class="bg" style="${meta && meta.backdrop ? `background-image:url(${IMG(meta.backdrop, 'w780')})` : ''}"></div>
-      <div class="inner">
-        <h1>${esc(meta && meta.name ? fullTitle(meta.name, meta.originalName) : displayName(sh))}</h1>
-        <div class="poster">${posterHtml(sh, meta && meta.poster)}</div>
-        <div>
-          <div class="sub">${meta ? esc((meta.firstAir || '').slice(0, 4)) + (meta.status ? ' · ' + esc(statusFr(meta.status)) : '') : ''} ${genres ? '· ' + esc(genres) : ''}</div>
-          <div class="tags">
-            ${sh.archived ? '<span class="chip chip-stop">⏹ Arrêtée</span>' : ''}
-            <span class="chip" id="showCount">${esc(showCountText(sh, meta))}</span>
-            <span class="chip" id="showRwChip"${isRewatching(sh) ? '' : ' hidden'}>${esc(showRewatchText(sh))}</span>
-          </div>
-          ${recoByHtml(sh.key)}
-          <div id="nextEpLine"></div>
-          <div class="movie-react show-react"><span class="react-label">Ma réaction</span>${reactPickerHtml(showScore(sh), true, !sh.seenKeys.size)}</div>
-          ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
-          <div class="overview">${esc(meta ? meta.overview : '')}</div>
-          <div class="detail-actions">
-            <button class="btn ${isFavShow(sh) ? 'on' : ''}" id="btnFav">${isFavShow(sh) ? '❤️ Dans mes favoris' : '♡ Ajouter aux favoris'}</button>
-            ${sh.seenKeys.size === 0
-              ? ((sh.archived || sh.custom) ? '' : `<button class="btn ${sh.followed ? '' : 'primary'}" id="btnLater">${sh.followed ? 'Retirer de mes séries' : '＋ Ajouter à mes séries'}</button>`)
-              : (sh.archived ? '' : `<button class="btn ${isPinnedWatching(sh) ? 'on' : ''}" id="btnPin">${isPinnedWatching(sh) ? '📌 Épinglée' : '📌 Épingler'}</button>`)}
-            ${sh.archived ? '<button class="btn primary" id="btnResume">▶ Reprendre la série</button>' : ''}
-            <button class="btn" id="btnMore" aria-label="Plus d’actions">⋯ Plus</button>
-          </div>
-        </div>
+    ${immHeroHtml({
+      backdrop: meta && meta.backdrop, poster: meta && meta.poster, posterHtml: posterHtml(sh, meta && meta.poster),
+      title: meta && meta.name ? fullTitle(meta.name, meta.originalName) : displayName(sh),
+      sub: meta ? [(meta.firstAir || '').slice(0, 4), meta.status ? statusFr(meta.status) : '', genres].filter(Boolean).map(esc).join(' · ') : '',
+      tags: `${sh.archived ? '<span class="chip chip-stop">' + icon('stop') + ' Arrêtée</span>' : ''}
+        <span class="chip" id="showCount">${esc(showCountText(sh, meta))}</span>
+        <span class="chip" id="showRwChip"${isRewatching(sh) ? '' : ' hidden'}>${esc(showRewatchText(sh))}</span>`,
+    })}
+    <div class="imm-body">
+      <div class="detail-actions">
+        <button class="btn ${isFavShow(sh) ? 'on' : ''}" id="btnFav">${isFavShow(sh) ? icon('heart', 'f') + ' Dans mes favoris' : icon('heart') + ' Ajouter aux favoris'}</button>
+        ${sh.seenKeys.size === 0
+          ? ((sh.archived || sh.custom) ? '' : `<button class="btn ${sh.followed ? '' : 'primary'}" id="btnLater">${sh.followed ? 'Retirer de mes séries' : icon('plus') + ' Ajouter à mes séries'}</button>`)
+          : (sh.archived ? '' : `<button class="btn ${isPinnedWatching(sh) ? 'on' : ''}" id="btnPin">${icon('pin')} ${isPinnedWatching(sh) ? 'Épinglée' : 'Épingler'}</button>`)}
+        ${sh.archived ? '<button class="btn primary" id="btnResume">▶ Reprendre la série</button>' : ''}
+        <button class="btn" id="btnMore" aria-label="Plus d’actions">${icon('more')} Plus</button>
       </div>
+      ${recoByHtml(sh.key)}
+      <div id="nextEpLine"></div>
+      ${avisCardHtml({ cls: 'show-react', score: showScore(sh), locked: !sh.seenKeys.size, vote: meta && meta.vote })}
+      ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
+      ${meta && meta.overview ? `<div class="glass imm-card"><div class="overview">${esc(meta.overview)}</div></div>` : ''}
     </div>
     <div class="detail-tabs">
       <button class="tab active" data-tab="episodes">Épisodes</button>
@@ -84,12 +79,39 @@ route('show', async (el, rest) => {
   }
 });
 
+// ---- Lot 9-B : en-tête immersif et carte « Votre avis » (fiche série, fiche film, aperçu Explorer) ----
+// o = { backdrop, poster (chemins TMDB), posterHtml, title (texte brut), sub (HTML déjà échappé), tags (HTML) }
+function immHeroHtml(o) {
+  const url = o.backdrop ? IMG(o.backdrop, 'w780') : (o.poster ? IMG(o.poster, 'w342') : '');
+  const kind = o.backdrop ? 'bd' : (o.poster ? 'pst' : 'none'); // pas de décor : affiche floutée, sinon dégradé
+  return `<div class="detail-hero title-top imm">
+    <div class="bg bg-${kind}" style="${url ? `background-image:url(${url})` : ''}"></div>
+    <div class="poster imm-poster">${o.posterHtml || ''}</div>
+    <div class="imm-in">
+      <h1>${esc(o.title)}</h1>
+      ${o.sub ? `<div class="sub">${o.sub}</div>` : ''}
+      ${o.tags ? `<div class="tags">${o.tags}</div>` : ''}
+    </div>
+  </div>`;
+}
+const fmtVoteFr = (v) => (Number(v) > 0 ? Number(v).toFixed(1).replace('.', ',') : '');
+// Note moyenne du public (TMDB), « 7,8 ★ »
+const avgHtml = (v) => fmtVoteFr(v) ? `<span class="avis-avg" title="Note moyenne du public (TMDB)">Note moyenne <b>${fmtVoteFr(v)} ★</b></span>` : '';
+// Carte « Votre avis » : les 5 réactions en grand (même mécanique que reactPickerHtml / wireReactPicker) + note moyenne.
+// o = { cls, score, locked, vote }
+function avisCardHtml(o) {
+  return `<div class="glass avis-card ${o.cls || ''}${o.locked ? ' is-locked' : ''}">
+    <div class="avis-head"><span class="react-label">Votre avis</span>${avgHtml(o.vote)}</div>
+    ${reactPickerHtml(o.score, true, o.locked)}
+  </div>`;
+}
+
 // ---- En-tête de la fiche série : « N épisode(s) vu(s) / T » et revisionnage, remis à jour à chaque changement ----
 // Épisodes réguliers vus (saison 0 = spéciaux exclue : sinon « 74 / 73 »).
 const regularSeenCount = (sh) => { let c = 0; for (const k of sh.seenKeys) { const p = k.split('|'); if (+p[p.length - 2] > 0) c++; } return c; };
 function showCountText(sh, meta) {
   const t = meta && meta.totalEpisodes ? airedTotal(meta) : 0;
-  return `${regularSeenCount(sh)} épisode(s) vu(s)${t ? ' / ' + t : ''}${meta && meta.totalEpisodes > t ? ` · ${meta.totalEpisodes - t} à venir` : ''}`;
+  return `${regularSeenCount(sh)} ${plural(regularSeenCount(sh), 'épisode vu', 'épisodes vus')}${t ? ' / ' + t : ''}${meta && meta.totalEpisodes > t ? ` · ${meta.totalEpisodes - t} à venir` : ''}`;
 }
 function showRewatchText(sh) { const p = rewatchPass(sh); return '🔁 Revisionnage' + (p ? ` ${p.done}/${p.total}` : ''); }
 function refreshShowHeader(sh) {
@@ -209,9 +231,9 @@ route('episode', async (el, rest) => {
       <p class="synopsis-text ep-synopsis ${hideSpoil ? 'spoil' : ''}">${esc(overviewTxt)}</p>
       <div class="detail-actions">
         <button class="btn ${seen ? 'primary' : ''}" id="epSeen">${seen ? '✓ Vu' : '✓ Je l’ai vu'}</button>
-        <button class="btn" id="epRw" ${seen ? '' : 'disabled title="Marquez d’abord l’épisode comme vu"'}>🔁 Je l’ai revu${rw > 0 ? ` · Vu ${rw + 1} fois` : ''}</button>
+        <button class="btn" id="epRw" ${seen ? '' : 'disabled title="Marquez d’abord l’épisode comme vu"'}>${icon('repeat')} Je l’ai revu${rw > 0 ? ` · Vu ${rw + 1} fois` : ''}</button>
         ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
-        ${seen ? '<button class="btn" id="epRwFix" title="Corriger le nombre de visionnages">✏️ Corriger</button>' : ''}
+        ${seen ? '<button class="btn" id="epRwFix" title="Corriger le nombre de visionnages">' + icon('edit') + ' Corriger</button>' : ''}
       </div>
       <div class="ep-react">
         <span class="react-label">Ma réaction</span>
@@ -269,7 +291,7 @@ function offlineSeasons(sh) {
   const seasons = Object.keys(bySeason).sort((a, b) => a - b);
   if (!seasons.length) return `<div class="empty">Aucun épisode enregistré. Ajoutez une clé TMDB (Réglages) pour voir la liste complète des épisodes, ou utilisez « ➕ Ajouter un épisode ».</div>`;
   return `<div class="panel"><p class="hint" style="color:var(--muted)">Sans clé TMDB, seuls vos épisodes vus / ajoutés sont affichés.</p></div>` +
-    seasons.map(s => `<div class="season-head"><h3>Saison ${s}</h3><span class="count">${bySeason[s].size} épisode(s)</span></div>`).join('');
+    seasons.map(s => `<div class="season-head"><h3>Saison ${s}</h3><span class="count">${bySeason[s].size} ${plural(bySeason[s].size, 'épisode', 'épisodes')}</span></div>`).join('');
 }
 
 // Split a season's episodes into groups whenever there is a very long gap
@@ -426,7 +448,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
     const buildBody = () => {
       const pass = currentPass(sh);
       body.innerHTML = all.map(e => epHtml(sh, sn, e, pass)).join('') +
-        `<button class="btn sm ghost add-ep" data-season="${block.ds}">➕ Ajouter un épisode à la saison ${block.ds}</button>`;
+        `<button class="btn sm ghost add-ep" data-season="${block.ds}">${icon('plus')} Ajouter un épisode à la saison ${block.ds}</button>`;
       wireEpisodes(body, sh, sn, updateCount, { getPrevUnseen });
       body.querySelector('.add-ep').onclick = () => addEpisodePrompt(sh, meta, block.ds);
       updateCount();
@@ -475,7 +497,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
       ev.stopPropagation();
       const seenEps = all.filter(e => isSeen(sh, sn, e.n)), rwEps = all.filter(e => rewatchOf(sh, sn, e.n) > 0);
       if (!seenEps.length && !rwEps.length) { toast('Rien à effacer dans cette saison'); return; }
-      const ok = await askModal(`<h2>Tout marquer comme non vu ?</h2><p>${seenEps.length} épisode(s) de « ${esc(block.label)} » seront décochés${rwEps.length ? ` et leurs revisionnages (${rwEps.length} épisode(s)) effacés` : ''}.</p>`, 'Annuler', 'Tout non vu');
+      const ok = await askModal(`<h2>Tout marquer comme non vu ?</h2><p>${seenEps.length} ${plural(seenEps.length, 'épisode', 'épisodes')} de « ${esc(block.label)} » ${plural(seenEps.length, 'sera décoché', 'seront décochés')}${rwEps.length ? ` et leurs revisionnages (${rwEps.length} ${plural(rwEps.length, 'épisode', 'épisodes')}) effacés` : ''}.</p>`, 'Annuler', 'Tout non vu');
       if (!ok) return;
       const snap = snapshotEpisodes(sh, blockKeys());
       all.forEach(e => {
@@ -522,7 +544,7 @@ function epHtml(sh, season, e, pass) {
     <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + epDisp(sh, season, e.n).n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
     <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" role="button" aria-label="Je l’ai revu" title="Je l’ai revu — appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
     ${epReactBtnHtml(epScore(k))}
-    ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">🗑</button>` : ''}
+    ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">${icon('trash')}</button>` : ''}
   </div>`;
 }
 
@@ -566,7 +588,7 @@ function celebrateCompletion(sh) {
   let spanTxt = null;
   if (wd.first && wd.last) {
     const days = Math.max(1, Math.round((Date.parse(String(wd.last).replace(' ', 'T')) - Date.parse(String(wd.first).replace(' ', 'T'))) / 86400000));
-    spanTxt = days >= 365 ? `${Math.round(days / 365 * 10) / 10} an(s)` : days >= 30 ? `${Math.round(days / 30)} mois` : `${days} j`;
+    spanTxt = days >= 365 ? `${Math.round(days / 365 * 10) / 10} ${plural(Math.round(days / 365 * 10) / 10, 'an', 'ans')}` : days >= 30 ? `${Math.round(days / 30)} mois` : `${days} j`;
   }
   const seasons = m ? m.seasons.length : 0;
   const rating = sh.showRating;
@@ -579,7 +601,7 @@ function celebrateCompletion(sh) {
       <div class="cel-stats">
         <div class="cel-stat"><b>${episodes}</b><span>épisodes vus</span></div>
         <div class="cel-stat"><b>${watchTime}</b><span>de visionnage</span></div>
-        ${spanTxt ? `<div class="cel-stat"><b>${spanTxt}</b><span>pour la terminer</span></div>` : (seasons ? `<div class="cel-stat"><b>${seasons}</b><span>saison(s)</span></div>` : '')}
+        ${spanTxt ? `<div class="cel-stat"><b>${spanTxt}</b><span>pour la terminer</span></div>` : (seasons ? `<div class="cel-stat"><b>${seasons}</b><span>${plural(seasons, 'saison', 'saisons')}</span></div>` : '')}
       </div>
       ${wd.first ? `<p class="cel-msg">Du ${fmtFull(wd.first)} au ${fmtFull(wd.last)}${showScore(sh) ? ` · Ta réaction : ${reactCaption(showScore(sh))}` : ''}</p>` : ''}
       <button class="btn primary" data-close>🎊 Génial !</button>
@@ -671,7 +693,7 @@ function offerMarkPrevious(sh, prevList, season, n) {
   const cnt = prevList.length;
   const label = epTag(sh, season, n);
   showModal(`<h2>Marquer les épisodes précédents ?</h2>
-    <p>Vous avez marqué l'épisode <strong>${label}</strong> comme vu. Voulez-vous aussi marquer les <strong>${cnt}</strong> épisode(s) précédent(s) comme vu(s) ?</p>
+    <p>Vous avez marqué l'épisode <strong>${label}</strong> comme vu. Voulez-vous aussi marquer les <strong>${cnt}</strong> ${plural(cnt, 'épisode précédent', 'épisodes précédents')} comme ${plural(cnt, 'vu', 'vus')} ?</p>
     <div class="row"><button class="btn ghost" data-close>Non, juste celui-ci</button><button class="btn primary" id="mpGo">Oui, tout marquer avant</button></div>`,
     (root) => {
       root.querySelector('#mpGo').onclick = () => {
@@ -689,7 +711,7 @@ function offerMarkPrevious(sh, prevList, season, n) {
         document.querySelectorAll('.season-head').forEach(h => { if (h._update) h._update(); }); // compteurs + « Tout vu / 🔁 Tout revu » + en-tête
         updateSyncStatus(); refreshShowHeader(sh);
         closeModal();
-        toast(`${cnt} épisode(s) marqué(s) comme vu(s)`);
+        toast(`${cnt} ${plural(cnt, 'épisode marqué', 'épisodes marqués')} comme ${plural(cnt, 'vu', 'vus')}`);
         if (isShowComplete(sh)) celebrateCompletion(sh);
       };
     });

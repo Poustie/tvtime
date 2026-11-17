@@ -19,30 +19,26 @@ function fmtAgo(dateStr) {
   if (n < 7) return `il y a ${n} j`;
   if (n < 31) return `il y a ${Math.round(n / 7)} sem.`;
   if (n < 365) return `il y a ${Math.round(n / 30)} mois`;
-  return `il y a ${Math.round(n / 365)} an(s)`;
+  return `il y a ${Math.round(n / 365)} ${plural(Math.round(n / 365), 'an', 'ans')}`;
 }
 
 route('home', async (el) => {
   buildModel();
   const shows = Array.from(MODEL.shows.values());
-  const archivedCount = shows.filter(s => s.archived).length;
   el.innerHTML = `
     <div class="page-head"><h1>Séries</h1>${searchBtn('tv')}${acctBtn()}
       <div class="spacer"></div>
-      ${seriesTab === 'avoir' ? `<button class="btn sm ghost ${homeEditOrder ? 'primary' : ''}" id="btnReorder">${homeEditOrder ? '✓ Terminé' : '↕ Réorganiser'}</button>
-      ${archivedCount ? `<button class="btn ghost sm" id="btnArchived">⏹ Arrêtées (${archivedCount})</button>` : ''}` : ''}
+      ${seriesTab === 'avoir' ? `<button class="btn sm ghost ${homeEditOrder ? 'primary' : ''}" id="btnReorder">${homeEditOrder ? icon('check') + ' Terminé' : icon('sort') + ' Réorganiser'}</button>` : ''}
     </div>
     <div class="pill-tabs" id="seriesTabs">
-      <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">📺 Mes séries</span>
-      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">🔜 Prochains</span>
-      <span class="chip ${seriesTab === 'calendrier' ? 'active' : ''}" data-stab="calendrier">📅 Calendrier</span>
+      <span class="chip ${seriesTab === 'avoir' ? 'active' : ''}" data-stab="avoir">${icon('tv')} Mes séries</span>
+      <span class="chip ${seriesTab === 'asuivre' ? 'active' : ''}" data-stab="asuivre">${icon('play')} Prochains</span>
+      <span class="chip ${seriesTab === 'calendrier' ? 'active' : ''}" data-stab="calendrier">${icon('calendar')} Calendrier</span>
     </div>
     <div id="seriesBody"></div>`;
 
   wireSearchBtn(el);
   el.querySelectorAll('#seriesTabs .chip').forEach(c => c.onclick = () => { seriesTab = c.dataset.stab; render(); });
-  const bArch = el.querySelector('#btnArchived');
-  if (bArch) bArch.onclick = () => { libFilter.kind = 'series'; libFilter.tab = 'archived'; libFilter.genres = []; libBackTo = '#/home'; location.hash = '#/library'; };
   const bReorder = el.querySelector('#btnReorder');
   if (bReorder) bReorder.onclick = () => { homeEditOrder = !homeEditOrder; render(); };
 
@@ -88,13 +84,14 @@ function firstNewEpisodeAir(s, m) {
   return first || m.lastAir;
 }
 async function renderSeriesAvoir(el, shows) {
-  const watching = [], stale = [], notStarted = [], finished = [];
+  const watching = [], stale = [], notStarted = [], finished = [], archived = [];
   const lists = { watching, stale, notStarted, finished };
-  for (const s of shows) { const c = seriesCategory(s); if (c) lists[c].push(s); }
+  for (const s of shows) { if (s.archived) { archived.push(s); continue; } const c = seriesCategory(s); if (c) lists[c].push(s); } // arrêtées : section à part, jamais en double
   watching.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
   stale.sort((a, b) => (a.lastSeenAt || '').localeCompare(b.lastSeenAt || ''));
   notStarted.sort((a, b) => displayName(a).localeCompare(displayName(b)));
   finished.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
+  archived.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
 
   // Section definitions, rendered in the user-chosen order.
   const defs = {
@@ -102,6 +99,7 @@ async function renderSeriesAvoir(el, shows) {
     stale:      { id: 'homeStale',      icon: '🕰️', title: 'Pas vu depuis longtemps', sub: 'Séries suivies mises en pause',          list: stale,      withAgo: true },
     notStarted: { id: 'homeNotStarted', icon: '🆕', title: 'Pas commencée',           sub: 'Dans votre liste mais jamais démarrée', list: notStarted, withAgo: false },
     finished:   { id: 'homeFinished',   icon: '✅', title: 'Terminée',                sub: 'Vues intégralement',                    list: finished,   withAgo: true },
+    archived:   { id: 'homeArchived',   icon: '⏹️', title: 'Arrêtées',                sub: 'Séries que vous avez décidé d’arrêter',  list: archived,   withAgo: true },
   };
   const order = normalizeHomeOrder(userState.homeOrder);
 
@@ -114,8 +112,8 @@ async function renderSeriesAvoir(el, shows) {
           <button class="ord-btn" data-move="up" data-sec="${secId}" ${pos === 0 ? 'disabled' : ''} title="Monter">▲</button>
           <button class="ord-btn" data-move="down" data-sec="${secId}" ${pos === total - 1 ? 'disabled' : ''} title="Descendre">▼</button>
         </div>` : ''}
-        <h2>${d.icon} ${d.title} <span class="sec-count">${d.list.length}</span></h2>
-        <button class="sec-info" title="${esc(d.sub)}" aria-label="À propos de cette catégorie">ℹ️</button>
+        <h2>${emojiIcon(d.icon)} ${d.title} <span class="sec-count">${d.list.length}</span></h2>
+        <button class="sec-info" title="${esc(d.sub)}" aria-label="À propos de cette catégorie">${icon('info')}</button>
       </div>
       ${d.list.length ? `<div class="grid" id="${d.id}"></div>` : `<p class="home-empty">Rien ici pour le moment.</p>`}
     </section>`;
@@ -207,7 +205,7 @@ async function refreshAiringDates(shows) {
 
 // Keep only known section ids, in a valid order, filling any missing ones.
 function normalizeHomeOrder(order) {
-  const known = ['watching', 'stale', 'notStarted', 'finished'];
+  const known = ['watching', 'stale', 'notStarted', 'finished', 'archived'];
   const out = [];
   for (const s of (Array.isArray(order) ? order : [])) if (known.includes(s) && !out.includes(s)) out.push(s);
   for (const s of known) if (!out.includes(s)) out.push(s);

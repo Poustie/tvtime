@@ -645,7 +645,7 @@ function exportSharedList() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'tvtime-liste-' + new Date().toISOString().slice(0, 10) + '.json';
   a.click();
-  toast(`Liste exportée : ${shows.length} série(s), ${movies.length} film(s)`);
+  toast(`Liste exportée : ${shows.length} ${plural(shows.length, 'série', 'séries')}, ${movies.length} ${plural(movies.length, 'film', 'films')}`);
 }
 // Merge a shared list into MY OWN additions (customShows / customMovies) so the
 // items are treated as added by me (deletable) — WITHOUT overwriting anything I
@@ -695,7 +695,7 @@ async function mergeSharedList(parsed) {
   scheduleSaveState();
   MODEL = null;
   render();
-  toast(`Ajouté : ${addedShows} série(s), ${addedMovies} film(s)`);
+  toast(`Ajouté : ${addedShows} ${plural(addedShows, 'série', 'séries')}, ${addedMovies} ${plural(addedMovies, 'film', 'films')}`);
 }
 // Replace the in-memory catalogue in place (DATA is a const reference).
 // Films added by hand that are in fact a film of the history (same TMDB id, or same

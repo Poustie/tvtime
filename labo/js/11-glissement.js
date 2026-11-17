@@ -217,9 +217,16 @@ function _swDrag(s, dx) {
   _setX(pane.el, (side === 'next' ? _W() : -_W()) + dx);
   _anchorSet(Math.abs(dx) / _W(), false);
 }
+// Zoom au pincement : tant que la page est zoomée (ou juste après un pincement), aucun glissement de page,
+// et html.zoomed lève la limite « pan-y » du CSS pour que le déplacement horizontal marche.
+let _pinchT = 0;
+function _isZoomed() { return !!(window.visualViewport && window.visualViewport.scale > 1.01); }
+function _syncZoomed() { document.documentElement.classList.toggle('zoomed', _isZoomed()); }
+if (window.visualViewport) { visualViewport.addEventListener('resize', _syncZoomed); _syncZoomed(); }
 document.addEventListener('touchstart', (e) => {
   _sw = null;
-  if (_swBusy || e.touches.length !== 1) return;
+  if (e.touches.length > 1) _pinchT = performance.now();
+  if (_swBusy || e.touches.length !== 1 || _isZoomed() || performance.now() - _pinchT < 400) return;
   const t = e.target;
   if (t.closest && t.closest('.bottom-nav, #seriesTabs, .fr-stories, .rv-row, .cast-list, .exp-row, .genre-chips, .sort-chips, .pv-seasons, .react, input, textarea, select')) return;
   if (document.getElementById('modalRoot') && document.getElementById('modalRoot').children.length) return;
@@ -232,6 +239,7 @@ document.addEventListener('touchstart', (e) => {
 }, { passive: true });
 document.addEventListener('touchmove', (e) => {
   const s = _sw; if (!s) return;
+  if (e.touches.length > 1 || _isZoomed()) { _pinchT = performance.now(); _sw = null; if (s.locked) _swFinish(s, false); return; }
   const x = e.touches[0].clientX, y = e.touches[0].clientY;
   const dx = x - s.x0, dy = y - s.y0;
   if (!s.locked) {

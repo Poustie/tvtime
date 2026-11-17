@@ -12,7 +12,7 @@ html.light { --glass-bg: rgba(255,255,255,.66); --glass-line: rgba(20,30,45,.10)
   -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: var(--glass-shadow); }
 
 /* ---------- En-tête immersif ---------- */
-.detail-hero.imm { height: min(58vh, 560px); height: min(58dvh, 560px); min-height: 330px; background: transparent; box-shadow: none;
+.detail-hero.imm { height: min(58vh, 560px); height: min(58svh, 560px); min-height: 330px; background: transparent; box-shadow: none;
   border-radius: 22px; margin-bottom: 14px; display: flex; flex-direction: column; justify-content: flex-end; }
 html.light .detail-hero.imm { --bg: var(--imm-bg); --text: var(--imm-text); --text2: var(--imm-text2); --muted: var(--imm-muted);
   --bg2: #f1f4f8; --bg3: #e6ebf1; --card: #fff; --line: #d5dbe3; color: var(--imm-text); }

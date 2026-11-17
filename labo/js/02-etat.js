@@ -12,7 +12,7 @@ let userState = {
   watchlist: {},   // showId -> true
   archived: {},    // showId -> true/false override
   customEpisodes: {}, // showKey -> [{s,n,name}] user-added episodes
-  homeOrder: ['watching', 'notStarted', 'stale', 'finished'], // order of the Séries sections
+  homeOrder: ['watching', 'notStarted', 'stale', 'finished', 'archived'], // order of the Séries sections
   movieStatus: {}, // movieName -> 'watched' | 'towatch' (user override)
   movieWatchedAt: {}, // movieName -> date string (enregistrée quand tu marques un film vu dans l'app)
   movieRatings: {}, // movieName -> rating(1-5) (ma notation d'un film)

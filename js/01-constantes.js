@@ -2,6 +2,10 @@
 'use strict';
 
 //////////////////////// Constants ////////////////////////
+// Version de TEST (dossier /labo/ en ligne, ou ?labo=1) : données à part (copiées une fois depuis l'app normale),
+// aucune connexion au compte en ligne, pas de service worker propre. L'app normale n'est jamais modifiée par le labo.
+const LABO = location.pathname.includes('/labo/') || /[?&]labo=1(&|$)/.test(location.search);
+const LS_NS = LABO ? 'montvtime-labo' : 'montvtime'; // préfixe des données locales (IndexedDB + localStorage)
 const DATA = window.TVTIME_DATA || {};
 const IMG = (p, size = 'w342') => p ? `https://image.tmdb.org/t/p/${size}${p}` : null;
 const TMDB = 'https://api.themoviedb.org/3';
@@ -11,6 +15,17 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 69, date: '17 novembre 2026', title: 'Nouveau look', items: [
+    'Barre du bas en « verre » transparent, avec des icônes dessinées à votre couleur. Les emojis des boutons, onglets et menus sont remplacés par des icônes dessinées.',
+    'Fiches des séries et des films : grande image en haut, titre en gros, et une carte « Votre avis » avec vos 5 réactions et la note moyenne du public.',
+    'Affiches : coins arrondis et note du public en doré (« ★ 8,1 »). Dans Personnalisation, vous choisissez où la placer, ou vous la masquez. Le badge « Favori » disparaît des affiches.',
+    'Bouton ⋯ des affiches : trois points bien visibles, même sur une affiche claire. Vous pouvez le masquer dans Personnalisation ; un appui long sur l’affiche fait la même chose.',
+    'Mon compte : grande photo, 4 chiffres clés, « Récemment vus » (une affiche par série) et un menu façon réglages.',
+    'Amis : rangée de photos de vos amis et fil « Dernières notations » avec leurs avis.',
+    'Séries : les séries arrêtées forment une catégorie « Arrêtées » que l’on peut réorganiser ou masquer, comme les autres.',
+    'Zoom : on peut zoomer avec deux doigts puis se déplacer dans la page, de haut en bas et de gauche à droite.',
+    'Écriture plus aérée, petites animations au toucher, et textes accordés (« 1 épisode vu », « 2 épisodes vus »).',
+  ] },
   { id: 68, date: '16 novembre 2026', title: 'En-tête qui reste en place', items: [
     'En glissant d’une page à l’autre, tout le haut de la page reste en place (titre, nombre de films, « Réorganiser », « Arrêtées », tri…) : il se transforme en douceur en celui de la page suivante.',
     'Titres « Explorer » et « Amis » sans symbole, comme « Séries » et « Films ». Explorer : « Par genre » retiré (le bouton Genres suffit).',
@@ -374,6 +389,87 @@ function wireReactPicker(box, get, set, canReact) {
 function setReactLocked(box, locked, v) {
   if (!box) return;
   const p = box.querySelector('.react5'); if (p) p.classList.toggle('locked', locked);
+  if (box.classList.contains('avis-card')) box.classList.toggle('is-locked', locked);
   const cap = box.querySelector('.react-cap'); if (cap) cap.innerHTML = reactCaption(v, locked);
 }
 
+
+//////////////////////// Icônes dessinées (labo) ////////////////////////
+// Tracés en ligne, trait fin arrondi, viewBox 24 — même style que la barre du bas. Couleur = currentColor.
+const ICONS = {
+  tv: '<rect x="3" y="6.5" width="18" height="13" rx="2.5"/><path d="M7 3.5h10"/>',
+  film: '<path d="M4 10h16v8.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z"/><path d="M3.6 10 3 6.6l15.3-2.7.6 3.4z"/><path d="M7.6 6l1.9 2.9M12.2 5.2l1.9 2.9"/>',
+  compass: '<circle cx="12" cy="12" r="8.5"/><path d="M15.6 8.4l-2.1 5.1-5.1 2.1 2.1-5.1z"/>',
+  users: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><circle cx="16.8" cy="9.3" r="2.3"/><path d="M15.6 14.3a4.3 4.3 0 0 1 5 4.6"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  star: '<path d="M12 3.8l2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.7-4.8 2.7 1-5.4-4-3.8 5.4-.7z"/>',
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.2C19.5 15.4 12 20 12 20z"/>',
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3z"/><path d="M12 13v7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  checkcircle: '<circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.4l2.7 2.7 5-5.4"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  history: '<path d="M4 12a8 8 0 1 0 2.5-5.8L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l2.5 1.5"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  list: '<path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/>',
+  chart: '<path d="M4 20V11M10 20V4.5M16 20v-6.5M21 20H3"/>',
+  palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.4 0 2-1 1.5-2-.6-1.2.2-2.5 1.6-2.5H17a3.5 3.5 0 0 0 3.5-3.5C20.5 7 16.8 3.5 12 3.5z"/><path d="M7.8 11h.01M10.5 7.8h.01M14.5 7.8h.01"/>',
+  gear: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  sparkle: '<path d="M11 3.5l1.9 5.4 5.4 1.9-5.4 1.9L11 18.1l-1.9-5.4-5.4-1.9 5.4-1.9z"/><path d="M18.5 15.5v4M16.5 17.5h4"/>',
+  book: '<path d="M5 4.5h10.5A2.5 2.5 0 0 1 18 7v13H7.5A2.5 2.5 0 0 1 5 17.5z"/><path d="M5 17.5A2.5 2.5 0 0 1 7.5 15H18"/>',
+  library: '<rect x="4" y="4" width="4" height="16" rx="1"/><rect x="10" y="4" width="4" height="16" rx="1"/><path d="M16.2 6l3.6-1 3 13.6-3.6 1z"/>',
+  sort: '<path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/>',
+  filter: '<path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"/>',
+  tag: '<path d="M3.5 12V4.5H11l9 9-6.5 6.5z"/><path d="M8 8.5h.01"/>',
+  play: '<path d="M8 5.5v13l11-6.5z"/>',
+  pause: '<path d="M9 5.5v13M15 5.5v13"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/>',
+  share: '<path d="M12 15V4M8 8l4-4 4 4M5 13v6.5h14V13"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  chev: '<path d="M9 5l7 7-7 7"/>',
+  more: '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
+  repeat: '<path d="M4 11a8 8 0 0 1 14-4.5L20 9M20 4v5h-5M20 13a8 8 0 0 1-14 4.5L4 15M4 20v-5h5"/>',
+  edit: '<path d="M4 20l1-4L16.5 4.5a2 2 0 0 1 3 3L8 19z"/><path d="M14.5 6.5l3 3"/>',
+  undo: '<path d="M9 6.5L4.5 11 9 15.5M5 11h9a5 5 0 0 1 0 9h-3"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8h.01"/>',
+  flame: '<path d="M12 3c1 3.5 5.5 5.5 5.5 10.5a5.5 5.5 0 0 1-11 0c0-2 1-3.5 2-4.5.3 1.5 1 2.3 2 2.5C10.2 8.5 10.5 5.5 12 3z"/>',
+  bulb: '<path d="M9 18h6M10 21h4M12 3.5a5.5 5.5 0 0 0-3.2 10c.8.6 1.2 1.4 1.2 2.5h4c0-1.1.4-1.9 1.2-2.5A5.5 5.5 0 0 0 12 3.5z"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H4.5c0 3 1.5 4.5 3.7 4.8M16 6h3.5c0 3-1.5 4.5-3.7 4.8M12 13v4M8.5 20h7M9.5 17h5"/>',
+  ticket: '<path d="M3.5 8.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2V10a2 2 0 0 0 0 4v1.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V14a2 2 0 0 0 0-4z"/><path d="M14 7.5v9"/>',
+  leaf: '<path d="M5 19c0-8 5-13 14-14 0 9-5 14-13 14z"/><path d="M5 19l7-7"/>',
+  medal: '<circle cx="12" cy="14.5" r="5"/><path d="M8.5 10.5l-2-7h4L12 7M15.5 10.5l2-7h-4L12 7"/>',
+  mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="M4 7.5l8 6 8-6"/>',
+  chat: '<path d="M4 5.5h16v10.5H10l-4.5 4v-4H4z"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+};
+// icon('tv') → <svg class="ic …"> ; cls 'f' = rempli (cœur plein…).
+function icon(name, cls = '') {
+  const p = ICONS[name]; if (!p) return '';
+  return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`;
+}
+// Emoji décoratif → nom d'icône (l'échelle d'appréciation 👎…🤩 et les émotions ne sont JAMAIS dedans).
+const EMOJI_ICON = {
+  '📺': 'tv', '🎬': 'film', '🎞': 'film', '🧭': 'compass', '👥': 'users', '🔍': 'search', '⭐': 'star', '❤': 'heart:f', '♡': 'heart',
+  '📌': 'pin', '＋': 'plus', '➕': 'plus', '➖': 'minus', '✓': 'check', '✅': 'checkcircle', '🕒': 'clock', '🕘': 'clock', '⏱': 'clock', '⏳': 'clock',
+  '🕰': 'history', '📅': 'calendar', '🗓': 'calendar', '📃': 'list', '📊': 'chart', '🎨': 'palette', '⚙': 'gear', '🆕': 'sparkle', '📘': 'book',
+  '📚': 'library', '↕': 'sort', '🎭': 'tag', '▶': 'play', '🗑': 'trash', '🔁': 'repeat', '✏': 'edit', '✍': 'edit', '⏹': 'stop', '⏸': 'pause',
+  '💌': 'mail', '📩': 'mail', '🏆': 'trophy', '🔥': 'flame', '💡': 'bulb', '🍿': 'ticket', '🌸': 'leaf', '🏅': 'medal', '💬': 'chat', '↩': 'undo', 'ℹ': 'info', '🔜': 'play',
+};
+// emojiIcon('📌') → svg ; un emoji inconnu est rendu tel quel.
+function emojiIcon(e, cls = '') {
+  const k = String(e == null ? '' : e).replace(/️/g, '').trim(), n = EMOJI_ICON[k];
+  if (!n) return e == null ? '' : e;
+  const [name, f] = n.split(':');
+  return icon(name, [cls, f].filter(Boolean).join(' '));
+}
+// leadIcon('🔥 Séries du moment') → svg + « Séries du moment » (seul le 1er emoji, s'il est connu).
+// Accord singulier / pluriel : plural(n, 'épisode vu', 'épisodes vus') ; 0 et 1 → singulier.
+function plural(n, un, plus) { return Math.abs(Number(n) || 0) >= 2 ? plus : un; }
+function leadIcon(s) {
+  const m = /^(\S+)\s+([\s\S]*)$/.exec(String(s)); if (!m) return s;
+  const k = m[1].replace(/️/g, '');
+  return EMOJI_ICON[k] ? emojiIcon(k) + ' ' + m[2] : s;
+}

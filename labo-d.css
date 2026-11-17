@@ -1,0 +1,42 @@
+/* Labo D — icônes dessinées (remplacent les emojis décoratifs). Taille = 1.15em, suit --fs. */
+svg.ic {
+  width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.2em;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+svg.ic.f { fill: currentColor; }
+.btn svg.ic, .chip svg.ic, .pick-btn svg.ic { margin-right: .15em; vertical-align: -0.22em; }
+
+/* Titres de section : couleur d'accent */
+.home-head h2 svg.ic, .exp-section h2 svg.ic, .up-group h2 svg.ic, .panel h3 svg.ic, .stat-sec h3 svg.ic,
+.bdg-head svg.ic, .page-head h1 svg.ic, .up-pause-head h2 svg.ic {
+  color: var(--accent-ink, var(--accent)); margin-right: .2em; vertical-align: -0.2em;
+}
+.chip.active svg.ic { color: inherit; }
+.btn.primary svg.ic { color: inherit; }
+.sec-info svg.ic { width: 1.35em; height: 1.35em; vertical-align: middle; }
+
+/* Boutons ⋯ sur les affiches : points dessinés */
+.card-more svg.ic { width: 26px; height: 10px; vertical-align: middle; overflow: visible; filter: drop-shadow(0 0 1.5px rgba(0,0,0,.5)); }
+.card-more svg.ic * { fill: #fff; stroke: rgba(0,0,0,.55); stroke-width: 2.6; paint-order: stroke; transition: fill .15s; }
+.card-more::before { display: none; }
+.card-more:hover svg.ic *, .card-more:active svg.ic * { fill: var(--accent); }
+.exp-add svg.ic { width: 1.15em; height: 1.15em; vertical-align: middle; stroke-width: 2.2; }
+.badge-pin svg.ic { width: 1.2em; height: 1.2em; vertical-align: middle; }
+.badge-tag svg.ic { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: .15em; }
+.search-btn svg.ic { width: 1.2em; height: 1.2em; vertical-align: middle; }
+.ep-del svg.ic { width: 1.1em; height: 1.1em; vertical-align: middle; }
+
+/* Feuille d'actions : icône à gauche */
+.sheet-item .si-ico svg.ic { width: 1.25em; height: 1.25em; vertical-align: middle; color: var(--accent-ink, var(--accent)); }
+.sheet-item.danger .si-ico svg.ic { color: inherit; }
+.sheet-item .si-ico { display: inline-flex; align-items: center; justify-content: center; }
+
+/* Mon compte */
+.menu-card .ic svg.ic { width: 1em; height: 1em; color: var(--accent-ink, var(--accent)); stroke-width: 1.7; vertical-align: middle; }
+.rec-ic svg.ic { width: 1em; height: 1em; color: var(--accent-ink, var(--accent)); vertical-align: middle; }
+.bdg svg.ic { color: var(--accent-ink, var(--accent)); }
+.empty .big svg.ic, .fd-empty .big svg.ic { width: 1.1em; height: 1.1em; color: var(--muted); stroke-width: 1.4; vertical-align: middle; }
+.fd-poster svg.ic { color: var(--muted); }
+
+/* Option « Bouton ⋯ sur les affiches » : masqué (html.more-off) — l'appui long reste actif */
+html.more-off .card-more { display: none !important; }

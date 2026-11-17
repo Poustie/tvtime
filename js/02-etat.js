@@ -12,7 +12,7 @@ let userState = {
   watchlist: {},   // showId -> true
   archived: {},    // showId -> true/false override
   customEpisodes: {}, // showKey -> [{s,n,name}] user-added episodes
-  homeOrder: ['watching', 'notStarted', 'stale', 'finished'], // order of the Séries sections
+  homeOrder: ['watching', 'notStarted', 'stale', 'finished', 'archived'], // order of the Séries sections
   movieStatus: {}, // movieName -> 'watched' | 'towatch' (user override)
   movieWatchedAt: {}, // movieName -> date string (enregistrée quand tu marques un film vu dans l'app)
   movieRatings: {}, // movieName -> rating(1-5) (ma notation d'un film)
@@ -59,7 +59,7 @@ let _dbPromise = null;
 function idbOpen() {
   if (_dbPromise) return _dbPromise;
   _dbPromise = new Promise((res, rej) => {
-    const r = indexedDB.open('montvtime', 1);
+    const r = indexedDB.open(LS_NS, 1);
     r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains('kv')) r.result.createObjectStore('kv'); };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -86,6 +86,21 @@ async function idbSet(key, val) {
   } catch { return false; }
 }
 
+// Labo : au premier lancement, copie (lecture seule) des données de l'app normale dans la base du labo.
+async function laboCopyFromMain() {
+  if (!LABO || await idbGet('userState')) return false;
+  const src = await new Promise((res) => { const r = indexedDB.open('montvtime'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onupgradeneeded = () => { r.transaction.abort(); res(null); }; });
+  if (!src || !src.objectStoreNames.contains('kv')) { try { src && src.close(); } catch {} return false; }
+  const all = await new Promise((res) => {
+    const out = {}; const cur = src.transaction('kv').objectStore('kv').openCursor();
+    cur.onsuccess = () => { const c = cur.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); };
+    cur.onerror = () => res(out);
+  });
+  src.close();
+  for (const [k, v] of Object.entries(all)) await idbSet(k, v);
+  for (const k of ['userState', 'dataOverride']) { try { const v = localStorage.getItem('montvtime_' + k); if (v && !all[k]) localStorage.setItem(LS_NS + '_' + k, v); } catch {} }
+  return Object.keys(all).length > 0;
+}
 async function apiGet(path) {
   try {
     const r = await fetch(path, { cache: 'no-store' });
@@ -115,7 +130,7 @@ function flushSaveState() {
     fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: body.length < 60000 }).catch(() => {});
   } else {
     idbSet('userState', userState);
-    try { localStorage.setItem('montvtime_userState', JSON.stringify(userState)); } catch {}
+    try { localStorage.setItem(LS_NS + '_userState', JSON.stringify(userState)); } catch {}
   }
 }
 // App masquée / fermée : si une sauvegarde est en attente, on l'écrit tout de suite.

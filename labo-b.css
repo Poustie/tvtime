@@ -1,0 +1,91 @@
+/* Lot 9-B (UI labo) — fiche immersive + carte « Votre avis » — fusionné dans styles.css à la fin */
+
+/* Couleurs « page » mémorisées sur <html> : l'en-tête des fiches remappe --bg en thème clair, on garde les vraies valeurs. */
+html { --imm-bg: var(--bg); --imm-text: var(--text); --imm-muted: var(--muted); --imm-text2: var(--text2);
+  --glass-bg: rgba(255,255,255,.07); --glass-line: rgba(255,255,255,.12); --glass-chip: rgba(18,22,28,.42);
+  --glass-shadow: 0 8px 28px rgba(0,0,0,.28); }
+html.light { --glass-bg: rgba(255,255,255,.66); --glass-line: rgba(20,30,45,.10); --glass-chip: rgba(255,255,255,.62);
+  --glass-shadow: 0 8px 24px rgba(20,30,45,.10); }
+
+/* Verre : fond translucide, flou d'arrière-plan, liseré clair, coins 20 px */
+.glass { background: var(--glass-bg); border: 1px solid var(--glass-line); border-radius: 20px;
+  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: var(--glass-shadow); }
+
+/* ---------- En-tête immersif ---------- */
+.detail-hero.imm { height: min(58vh, 560px); height: min(58svh, 560px); min-height: 330px; background: transparent; box-shadow: none;
+  border-radius: 22px; margin-bottom: 14px; display: flex; flex-direction: column; justify-content: flex-end; }
+html.light .detail-hero.imm { --bg: var(--imm-bg); --text: var(--imm-text); --text2: var(--imm-text2); --muted: var(--imm-muted);
+  --bg2: #f1f4f8; --bg3: #e6ebf1; --card: #fff; --line: #d5dbe3; color: var(--imm-text); }
+.detail-hero.imm .bg { filter: none; background-size: cover; background-position: center 18%;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 34%, rgba(0,0,0,.6) 62%, rgba(0,0,0,.18) 86%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0%, #000 34%, rgba(0,0,0,.6) 62%, rgba(0,0,0,.18) 86%, transparent 100%); }
+/* Pas de backdrop : affiche floutée, ou à défaut un dégradé à la couleur choisie */
+.detail-hero.imm .bg.bg-pst { filter: blur(24px) saturate(1.25); transform: scale(1.25); }
+.detail-hero.imm .bg.bg-none { background: radial-gradient(120% 90% at 20% 0%, color-mix(in srgb, var(--accent) 45%, #000) 0%, transparent 70%),
+  linear-gradient(160deg, var(--bg3), var(--imm-bg)); }
+/* Petite affiche en haut à droite (garde l'agrandissement au toucher) */
+.detail-hero.imm .imm-poster { position: absolute; top: 14px; right: 14px; width: 64px; z-index: 2; border-radius: 10px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.35); box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.detail-hero.imm .imm-poster img { display: block; width: 100%; }
+.detail-hero.imm .imm-poster .fallback-title, .detail-hero.imm .imm-poster .ph { font-size: max(11px, calc(11px * var(--fs, 1))); min-height: 92px; padding: 6px; display: flex; align-items: center; justify-content: center; text-align: center; background: var(--bg3); color: var(--text); }
+.detail-hero.imm .imm-in { position: relative; z-index: 1; padding: 0 18px 16px; }
+.detail-hero.imm .imm-in h1 { margin: 0 0 6px; font-size: calc(32px * var(--fs, 1)); line-height: 1.08; font-weight: 800; letter-spacing: -.02em;
+  color: var(--imm-text); overflow-wrap: anywhere; text-shadow: 0 2px 14px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.35); }
+html.light .detail-hero.imm .imm-in h1 { text-shadow: 0 1px 12px rgba(255,255,255,.9), 0 0 2px rgba(255,255,255,.8); }
+.detail-hero.imm .sub { color: var(--imm-text2); font-size: calc(14px * var(--fs, 1)); line-height: 1.35; text-shadow: 0 1px 8px rgba(0,0,0,.4); }
+html.light .detail-hero.imm .sub { color: var(--imm-muted); text-shadow: 0 1px 8px rgba(255,255,255,.8); }
+.detail-hero.imm .tags { margin: 10px 0 0; }
+.detail-hero.imm .chip { background: var(--glass-bg); color: var(--imm-text); border-color: var(--glass-line); cursor: default;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.detail-hero.imm .chip.chip-stop { color: var(--red); }
+
+/* Bouton retour en verre, posé sur l'image */
+.back-btn:has(+ .detail-hero.imm), .back-btn:has(~ #pv .detail-hero.imm) { position: relative; z-index: 5; display: block; width: fit-content; max-width: calc(100% - 110px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin: 0 0 -44px 10px; padding: 8px 14px; min-height: 36px; line-height: 20px; border-radius: 999px; background: var(--glass-chip); color: var(--text);
+  border: 1px solid var(--glass-line); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+html:not(.light) .back-btn:has(+ .detail-hero.imm), html:not(.light) .back-btn:has(~ #pv .detail-hero.imm) { color: #fff; }
+.back-btn:has(~ #pv .detail-hero.imm) { margin-top: 10px; }
+.back-btn + .detail-hero.imm, #pv .detail-hero.imm { margin-top: 0 !important; }
+
+/* ---------- Corps : cartes en verre ---------- */
+.imm-body { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.imm-body .detail-actions { margin: 0; gap: 8px; }
+.imm-body .detail-actions .btn { min-height: 44px; border-radius: 16px; background: var(--glass-bg); color: var(--text); border: 1px solid var(--glass-line);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3); backdrop-filter: blur(16px) saturate(1.3); box-shadow: var(--glass-shadow); }
+.imm-body .detail-actions .btn.primary { background: var(--accent); color: var(--on-accent, #10141a); border-color: var(--accent); }
+.imm-body .detail-actions .btn.on { border-color: var(--accent); color: var(--accent-ink, var(--accent)); }
+.imm-body .detail-actions .btn:disabled { opacity: .5; }
+.imm-tagline { font-style: italic; color: var(--muted); font-size: calc(14px * var(--fs, 1)); padding: 0 4px; }
+.imm-card { padding: 14px 16px; }
+.imm-card .overview { color: var(--text2); font-size: calc(14px * var(--fs, 1)); line-height: 1.5; max-width: none;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.imm-body .next-ep-line { margin: 0; padding: 12px 16px; border-radius: 18px; background: var(--glass-bg); color: var(--text);
+  border: 1px solid var(--glass-line); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: var(--glass-shadow); min-height: 44px; }
+.imm-body .reco-by { align-self: flex-start; }
+.imm-body .movie-progress { max-width: none; margin: 0; }
+.imm-body .movie-progress input { background: var(--glass-bg); border-color: var(--glass-line); }
+.imm-body .appr { margin: 0; max-width: none; border-radius: 18px; }
+.imm-body .appr-slot:empty { display: none; }
+
+/* ---------- Carte « Votre avis » ---------- */
+.avis-card { padding: 14px 14px 12px; margin: 0; display: block; }
+.avis-card .avis-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.avis-card .react-label { color: var(--text); font-weight: 700; font-size: calc(16px * var(--fs, 1)); }
+.avis-card .avis-avg { color: var(--muted); font-size: calc(13px * var(--fs, 1)); }
+.avis-card .avis-avg b { color: var(--accent-ink, var(--accent)); font-size: calc(16px * var(--fs, 1)); }
+.avis-card.avis-only .avis-head { margin-bottom: 0; }
+.avis-card .react5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.avis-card .react5 button { background: transparent; border: 1px solid transparent; border-radius: 16px; cursor: pointer; min-height: 52px; padding: 6px 0;
+  font-size: calc(32px * var(--fs, 1)); line-height: 1; opacity: .9; transition: opacity .2s, transform .2s, box-shadow .2s, background .2s; }
+.avis-card .react5:has(button.on) button:not(.on) { opacity: .32; filter: saturate(.6); }
+.avis-card .react5 button.on { opacity: 1; transform: scale(1.1); background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 20px color-mix(in srgb, var(--accent) 60%, transparent); }
+.avis-card .react5 button:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.avis-card .react-cap { display: block; text-align: center; margin-top: 10px; font-size: calc(13px * var(--fs, 1)); }
+/* Pas encore vu : carte grisée */
+.avis-card .react5.locked button { opacity: .22; filter: grayscale(1); cursor: not-allowed; }
+.avis-card .react5.locked button.on { opacity: .4; }
+.avis-card .react5.locked ~ .react-cap { color: var(--muted); }
+.avis-card.is-locked { background: var(--glass-bg); opacity: .92; }
+/* Sans image du tout : en-tête plus bas */
+.detail-hero.imm:has(.bg-none) { height: auto; min-height: 260px; }

@@ -37,3 +37,6 @@ svg.ic.f { fill: currentColor; }
 .bdg svg.ic { color: var(--accent-ink, var(--accent)); }
 .empty .big svg.ic, .fd-empty .big svg.ic { width: 1.1em; height: 1.1em; color: var(--muted); stroke-width: 1.4; vertical-align: middle; }
 .fd-poster svg.ic { color: var(--muted); }
+
+/* Option « Bouton ⋯ sur les affiches » : masqué (html.more-off) — l'appui long reste actif */
+html.more-off .card-more { display: none !important; }
