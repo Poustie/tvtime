@@ -15,6 +15,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 70, date: '17 novembre 2026', title: 'Mon compte plus propre', items: [
+    'Mon compte : les réglages du profil (photo, « trouvable », partages) sont rangés derrière le bouton « Modifier le profil », dans un bloc plus compact.',
+    'Affiches plus épurées : la note du public et le bouton ⋯ sont masqués par défaut. Vous pouvez les réafficher dans Personnalisation ; l’appui long sur une affiche ouvre toujours ses actions.',
+  ] },
   { id: 69, date: '17 novembre 2026', title: 'Nouveau look', items: [
     'Barre du bas en « verre » transparent, avec des icônes dessinées à votre couleur. Les emojis des boutons, onglets et menus sont remplacés par des icônes dessinées.',
     'Fiches des séries et des films : grande image en haut, titre en gros, et une carte « Votre avis » avec vos 5 réactions et la note moyenne du public.',

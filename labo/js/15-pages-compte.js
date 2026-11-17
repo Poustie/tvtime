@@ -149,6 +149,7 @@ function profileHeroHtml() {
   return `<div class="acct-hero"><div class="acct-av">${av}</div><div class="acct-name">${esc(name)}</div>
     <button class="btn sm ghost" id="acctEdit">${sbSession ? icon('edit') + ' Modifier le profil' : icon('user') + ' Se connecter'}</button></div>`;
 }
+let _acctEditOpen = false; // bloc « Modifier le profil » ouvert (gardé quand la page se redessine)
 const PROFILE_MENU = [
   ['library', '#/library', 'Bibliothèque', 'Toutes vos œuvres — séries &amp; films'],
   ['chart', '#/stats', 'Statistiques', 'Séries &amp; films'],
@@ -181,7 +182,7 @@ route('profile', async (el) => {
     ${backBtn('#/home')}
     <div class="page-head"><h1>Mon compte</h1></div>
     <div id="acctHero">${profileHeroHtml()}</div>
-    ${sbSession ? '<div id="acctProfile"></div>' : ''}
+    ${sbSession ? `<div id="acctProfile"${_acctEditOpen ? '' : ' hidden'}></div>` : ''}
     <a class="glass acct-stats" href="#/stats" aria-label="Voir les statistiques">
       <div><b>${statFmtN(moviesSeen)}</b><span>Films vus</span></div>
       <div><b>${statFmtN(following)}</b><span>Séries suivies</span></div>
@@ -198,10 +199,17 @@ route('profile', async (el) => {
   const gc = el.querySelector('#guideCard');
   if (gc) gc.onclick = (ev) => { ev.preventDefault(); showGuide(0); };
   const ap = el.querySelector('#acctProfile');
-  const goEdit = () => { const t = ap || el.querySelector('#acctSb'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  // « Modifier le profil » : ouvre / referme le bloc de réglages du profil (replié par défaut pour une page propre)
+  const goEdit = () => {
+    if (!ap) { const t = el.querySelector('#acctSb'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    ap.hidden = !ap.hidden; _acctEditOpen = !ap.hidden;
+    el.querySelectorAll('#acctEdit').forEach(b => b.classList.toggle('on', _acctEditOpen));
+    if (_acctEditOpen) ap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const edit = el.querySelector('#acctEdit');
   if (edit) edit.onclick = goEdit;
   if (ap) fillAccountProfile(ap).then(() => {
+    if (!sbProfile) { ap.hidden = false; return; } // profil pas encore créé : le formulaire reste visible
     const h = el.querySelector('#acctHero');
     if (h && sbProfile) { h.innerHTML = profileHeroHtml(); const e2 = h.querySelector('#acctEdit'); if (e2) e2.onclick = goEdit; }
   });

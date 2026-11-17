@@ -141,9 +141,9 @@ function applyTheme() {
   root.style.setProperty('--fs', String(TEXT_SIZES[p.textSize] || 1));
   root.classList.toggle('poster-s', p.posterSize === 's');
   root.classList.toggle('poster-l', p.posterSize === 'l');
-  const rp = ['tl', 'tr', 'bl', 'off'].includes(p.ratePos) ? p.ratePos : 'tl'; // note TMDB sur les affiches : emplacement ou masquée
+  const rp = ['tl', 'tr', 'bl', 'off'].includes(p.ratePos) ? p.ratePos : 'off'; // note TMDB sur les affiches : emplacement ou masquée
   for (const k of ['tl', 'tr', 'bl', 'off']) root.classList.toggle('rate-' + k, k === rp);
-  root.classList.toggle('more-off', p.moreBtn === 'off'); // bouton ⋯ des affiches masqué (l'appui long reste actif)
+  root.classList.toggle('more-off', p.moreBtn !== 'on'); // bouton ⋯ des affiches masqué (l'appui long reste actif)
   // La barre d'état du téléphone (heure/batterie) suit cette couleur.
   const m = document.querySelector('meta[name="theme-color"]');
   if (m) m.setAttribute('content', t === 'amoled' ? '#000000' : t === 'light' ? '#f4f5f7' : '#0e1116');
@@ -171,11 +171,11 @@ route('custom', async (el) => {
       <p class="hint" style="color:var(--muted)">Sur téléphone : 4, 3 ou 2 affiches par ligne.</p>
     </div>
     <div class="panel"><h3>Note sur les affiches</h3>
-      <div class="chips">${chip('ratePos', 'tl', 'En haut à gauche', p.ratePos || 'tl')}${chip('ratePos', 'tr', 'En haut à droite', p.ratePos || 'tl')}${chip('ratePos', 'bl', 'En bas à gauche', p.ratePos || 'tl')}${chip('ratePos', 'off', 'Masquer', p.ratePos || 'tl')}</div>
+      <div class="chips">${chip('ratePos', 'tl', 'En haut à gauche', p.ratePos || 'off')}${chip('ratePos', 'tr', 'En haut à droite', p.ratePos || 'off')}${chip('ratePos', 'bl', 'En bas à gauche', p.ratePos || 'off')}${chip('ratePos', 'off', 'Masquer', p.ratePos || 'off')}</div>
       <p class="hint" style="color:var(--muted)">La note moyenne du public (TMDB), en doré : « ★ 8,1 ».</p>
     </div>
     <div class="panel"><h3>Bouton ⋯ sur les affiches</h3>
-      <div class="chips">${chip('moreBtn', 'on', 'Afficher', p.moreBtn === 'off' ? 'off' : 'on')}${chip('moreBtn', 'off', 'Masquer', p.moreBtn === 'off' ? 'off' : 'on')}</div>
+      <div class="chips">${chip('moreBtn', 'on', 'Afficher', p.moreBtn === 'on' ? 'on' : 'off')}${chip('moreBtn', 'off', 'Masquer', p.moreBtn === 'on' ? 'on' : 'off')}</div>
       <p class="hint" style="color:var(--muted)">Même masqué, un appui long sur une affiche (série ou film) ouvre les mêmes actions que le bouton ⋯.</p>
     </div>
     <div class="panel"><h3>Onglet à l'ouverture</h3>
