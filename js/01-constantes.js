@@ -16,7 +16,7 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
   { id: 71, date: '17 novembre 2026', title: 'Profil sans doublon', items: [
-    'Mon compte → « Modifier le profil » : votre photo n’apparaît plus deux fois ; un simple bouton « Changer la photo » la remplace.',
+    'Mon compte : votre photo n’apparaît plus qu’une fois, en haut. Pour la changer, touchez-la (petit crayon).',
   ] },
   { id: 70, date: '17 novembre 2026', title: 'Mon compte plus propre', items: [
     'Mon compte : les réglages du profil (photo, « trouvable », partages) sont rangés derrière le bouton « Modifier le profil », dans un bloc plus compact.',
