@@ -146,7 +146,8 @@ function profileHeroHtml() {
   const p = sbSession ? (sbProfile || c) : null;
   const name = (p && p.pseudo) || userDisplayName() || '?';
   const av = p ? avatarHtml(p.avatar, name, 'xl') : '<span class="avatar xl">' + esc(name.slice(0, 1).toUpperCase()) + '</span>';
-  return `<div class="acct-hero"><div class="acct-av">${av}</div><div class="acct-name">${esc(name)}</div>
+  const canPhoto = !!(sbSession && sbProfile);
+  return `<div class="acct-hero"><div class="acct-av${canPhoto ? ' can-edit' : ''}"${canPhoto ? ' role="button" tabindex="0" aria-label="Changer la photo" title="Changer la photo"' : ''}>${av}${canPhoto ? '<span class="acct-av-cam">' + icon('edit') + '</span>' : ''}</div><div class="acct-name">${esc(name)}</div>
     <button class="btn sm ghost${sbSession && _acctEditOpen ? ' on' : ''}" id="acctEdit">${sbSession ? icon('edit') + ' Modifier le profil' : icon('user') + ' Se connecter'}</button></div>`;
 }
 let _acctEditOpen = false; // bloc « Modifier le profil » ouvert (gardé quand la page se redessine)
@@ -211,7 +212,11 @@ route('profile', async (el) => {
   if (ap) fillAccountProfile(ap).then(() => {
     if (!sbProfile) { ap.hidden = false; return; } // profil pas encore créé : le formulaire reste visible
     const h = el.querySelector('#acctHero');
-    if (h && sbProfile) { h.innerHTML = profileHeroHtml(); const e2 = h.querySelector('#acctEdit'); if (e2) e2.onclick = goEdit; }
+    if (h && sbProfile) {
+      h.innerHTML = profileHeroHtml(); const e2 = h.querySelector('#acctEdit'); if (e2) e2.onclick = goEdit;
+      const av = h.querySelector('.acct-av.can-edit'); // toucher la photo = la changer
+      if (av) av.onclick = () => { const f = ap.querySelector('#frAvatar'); if (f) f.click(); };
+    }
   });
   const rv = el.querySelector('#rvRow');
   if (rv) {
