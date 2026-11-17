@@ -290,7 +290,13 @@ main {
   display: flex; align-items: center; gap: 12px; margin: 22px 0 10px;
   cursor: pointer; user-select: none;
 }
-.season-head h3 { margin: 0; font-size: calc(17px * var(--fs, 1)); }
+.season-head h3 { margin: 0; font-size: calc(17px * var(--fs, 1)); min-width: 0; }
+/* Saison avec un vrai nom (« Tokyo Ghoul √A ») : le nom sur toute la largeur, « Saison 2 » + compteur + boutons dessous. */
+.season-head.named { flex-wrap: wrap; row-gap: 6px; }
+.season-head.named h3 { flex: 1 1 calc(100% - 30px); line-height: 1.25; overflow-wrap: anywhere; }
+.season-head.named .season-num { margin-left: 22px; color: var(--muted); font-weight: 600; font-size: calc(13px * var(--fs, 1)); white-space: nowrap; }
+.season-head.named .count { margin-left: -4px; }
+.season-head.named .count::before { content: '· '; }
 .season-head .count { color: var(--muted); font-size: calc(13px * var(--fs, 1)); }
 .season-head .caret { color: var(--muted); font-size: max(11px, calc(12px * var(--fs, 1))); transition: transform .15s ease; flex: none; }
 .season-head:not(.collapsed) .caret { transform: rotate(90deg); }
@@ -1002,3 +1008,34 @@ html.light .bn-ic svg { filter: none; }
 main { padding-bottom: max(118px, calc(env(safe-area-inset-bottom) + 104px)); }
 /* Version de test : fine bande orange en haut de l'écran */
 html.labo body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 999; background: #ff8a00; pointer-events: none; }
+
+/* ---- En-tête qui se cache en descendant et revient dès qu'on remonte (v145) ----
+   L'en-tête de la page (titre, loupe, avatar) reste collé en haut ; 18-interface.js le décale (--hd-y)
+   au rythme du doigt. Une fois décollé du haut de page, il prend un fond flouté qui se fond dans les affiches. */
+#app > .page-head.hd-sticky {
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 35;
+  transform: translate3d(0, var(--hd-y, 0px), 0);
+  will-change: transform;
+}
+#app > .page-head.hd-sticky.hd-snap { transition: transform .26s cubic-bezier(.2,.8,.2,1); }
+#app > .page-head.hd-sticky::before, #app > .page-head.hd-sticky::after {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  left: calc(50% - 50vw); width: 100vw;
+  opacity: 0; transition: opacity .2s ease;
+  --hd-bg: 13,17,23;
+}
+/* Couche floutée derrière l'en-tête (jusque sous la barre d'état)… */
+#app > .page-head.hd-sticky::before {
+  top: calc(-1 * env(safe-area-inset-top, 0px) - 18px); bottom: -8px;
+  background: rgba(var(--hd-bg), .78);
+  -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%);
+}
+/* … puis un dégradé : les affiches disparaissent en fondu sous l'en-tête. */
+#app > .page-head.hd-sticky::after {
+  top: calc(100% + 8px); height: 28px;
+  background: linear-gradient(180deg, rgba(var(--hd-bg), .78), rgba(var(--hd-bg), 0));
+}
+html.amoled #app > .page-head.hd-sticky::before, html.amoled #app > .page-head.hd-sticky::after { --hd-bg: 0,0,0; }
+html.light #app > .page-head.hd-sticky::before, html.light #app > .page-head.hd-sticky::after { --hd-bg: 255,255,255; }
+#app > .page-head.hd-stuck::before, #app > .page-head.hd-stuck::after { opacity: 1; }
+html.zoomed #app > .page-head.hd-sticky { position: relative; top: 0; transform: none; }

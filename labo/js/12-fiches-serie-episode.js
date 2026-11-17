@@ -348,6 +348,22 @@ const pad2 = (v) => String(v).padStart(2, '0');
 const epTag = (sh, season, n) => { const d = epDisp(sh, season, n); return `${d.s}×${pad2(d.n)}`; };
 const epSE = (sh, season, n) => { const d = epDisp(sh, season, n); return `S${pad2(d.s)}E${pad2(d.n)}`; };
 
+// Nom propre d'une saison TMDB (« Tokyo Ghoul √A »), sauf les noms génériques (« Saison 2 », « Season 2 »…).
+function seasonTitle(meta, sn) {
+  const s = meta && meta.seasons && meta.seasons.find(x => x.n === sn);
+  const nm = s && (s.name || '').trim();
+  if (!nm || /^(saison|season|s[ée]rie|series|temporada|staffel|stagione|part|partie)s*d+$/i.test(nm) || nm === 'Saison ' + sn) return '';
+  return nm;
+}
+// Titre de saison : le nom sur une ligne entière, « Saison 2 » en petit sur la ligne des boutons.
+function applySeasonName(head, label, name) {
+  const h3 = head.querySelector('h3'); if (!h3) return;
+  head.classList.toggle('named', !!name);
+  h3.textContent = name || label;
+  let num = head.querySelector('.season-num');
+  if (name && !num) { num = document.createElement('span'); num.className = 'season-num'; h3.after(num); }
+  if (num) { if (name) num.textContent = label; else num.remove(); }
+}
 async function renderSeasons(container, sh, tmdbId, meta, fresh) {
   container.innerHTML = '';
   // Merge TMDB seasons with any user-added (custom) seasons/episodes.
@@ -381,7 +397,7 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
     else blocks.push({ sn, ds: sn, label: 'Saison ' + sn, eps: all });
   } else {
     _splitMaps.set(sh.key, null);
-    for (const sn of sorted) blocks.push({ sn, ds: sn, label: 'Saison ' + sn, eps: null }); // fetched lazily below
+    for (const sn of sorted) blocks.push({ sn, ds: sn, label: 'Saison ' + sn, name: seasonTitle(meta, sn), eps: null }); // fetched lazily below
   }
 
   // Flat list of rendered episodes, used to offer "mark all previous episodes".
@@ -432,7 +448,8 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
 
     const head = document.createElement('div');
     head.className = 'season-head' + (expand ? '' : ' collapsed');
-    head.innerHTML = `<span class="caret">▸</span><h3>${esc(block.label)}</h3><span class="count" id="${secId}_c">${seenInBlock()} / ${total}</span> <div class="markall-group"><button class="btn sm ghost markall-seen">Tout vu</button><button class="btn sm ghost markall-unseen">Tout non vu</button></div>`;
+    head.innerHTML = `<span class="caret">▸</span><h3${block.name != null ? ' data-sn="' + sn + '"' : ''}>${esc(block.label)}</h3><span class="count" id="${secId}_c">${seenInBlock()} / ${total}</span> <div class="markall-group"><button class="btn sm ghost markall-seen">Tout vu</button><button class="btn sm ghost markall-unseen">Tout non vu</button></div>`;
+    if (block.name) applySeasonName(head, block.label, block.name);
     container.appendChild(head);
 
     const body = document.createElement('div');
@@ -509,6 +526,15 @@ async function renderSeasons(container, sh, tmdbId, meta, fresh) {
     };
   }
 
+  // Fiche gardée en mémoire avant l'ajout des noms de saison : on va les chercher une fois, discrètement.
+  if (tmdbId && metaSeasons.length > 1 && !('name' in metaSeasons[0]) && blocks.some(b => b.name != null)) {
+    getShowMeta(tmdbId, true).then(m => {
+      container.querySelectorAll('.season-head h3[data-sn]').forEach(h => {
+        const nm = seasonTitle(m, +h.dataset.sn);
+        if (nm) applySeasonName(h.closest('.season-head'), 'Saison ' + h.dataset.sn, nm);
+      });
+    }).catch(() => {});
+  }
   // On a fresh open of a show in progress, jump straight to the first unwatched
   // episode (after render() has done its scroll-to-top).
   if (fresh && firstUnseenEl && sh.seenKeys.size > 0) {

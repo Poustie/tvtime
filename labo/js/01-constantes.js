@@ -15,6 +15,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 72, date: '17 novembre 2026', title: 'Noms des saisons et en-tête', items: [
+    'Fiches séries : les saisons qui ont un vrai nom l’affichent (ex. « Tokyo Ghoul √A »), avec « Saison 2 » juste en dessous.',
+    'En-tête : il se cache quand vous descendez et revient dès que vous remontez, les affiches passant en fondu derrière.',
+  ] },
   { id: 71, date: '17 novembre 2026', title: 'Profil sans doublon', items: [
     'Mon compte : votre photo n’apparaît plus qu’une fois, en haut. Pour la changer, touchez-la (petit crayon).',
   ] },

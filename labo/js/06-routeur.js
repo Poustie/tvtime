@@ -104,13 +104,13 @@ async function render() {
   // Page already in place after a swipe: nothing to render (unless its data changed meanwhile).
   if (_suppressRenderHash && _suppressRenderHash === location.hash) {
     _suppressRenderHash = null;
-    if (el._ver === _dataVer) { schedulePanes(); return; }
+    if (el._ver === _dataVer) { schedulePanes(); _hdSetup(); return; }
   }
   _suppressRenderHash = null;
   // Onglet du bas : la page voisine est déjà prête → échange immédiat (pas de « Chargement… », rien qui clignote).
   if (_prevHash && _prevHash !== _hashNow && !_swBusy && SWIPE_ROUTES.includes(name) && SWIPE_ROUTES.includes(_prevHash.slice(2).split('/')[0])) {
     const pane = _panes[_hashNow];
-    if (pane && pane.el._ver === _dataVer && el._ver === _dataVer) { _swapPane(_prevHash, _hashNow, pane); schedulePanes(); return; }
+    if (pane && pane.el._ver === _dataVer && el._ver === _dataVer) { _swapPane(_prevHash, _hashNow, pane); schedulePanes(); _hdSetup(); return; }
   }
   _anchorEnd();
   dropPane(location.hash || '#/home'); // never keep a hidden copy of the page being rendered
@@ -126,6 +126,7 @@ async function render() {
   el.style.minHeight = '';
   window.scrollTo(0, _keepY != null ? _keepY : (name !== 'show' && name !== 'movie' && name !== 'episode' && saved ? saved : 0));
   schedulePanes();
+  _hdSetup(); // en-tête qui revient en remontant (18-interface.js)
 }
 window.addEventListener('hashchange', render);
 

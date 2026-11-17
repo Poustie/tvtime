@@ -140,7 +140,7 @@ async function getShowMeta(tmdbId, force) {
     overview: d.overview, firstAir: d.first_air_date, status: d.status,
     runtime: (d.episode_run_time && d.episode_run_time[0]) || null,
     genres: (d.genres || []).map(g => g.name), lang: d.original_language || null,
-    seasons: (d.seasons || []).filter(s => s.season_number > 0).map(s => ({ n: s.season_number, count: s.episode_count })),
+    seasons: (d.seasons || []).filter(s => s.season_number > 0).map(s => ({ n: s.season_number, count: s.episode_count, name: s.name || '' })),
     totalEpisodes: d.number_of_episodes,
     lastAir: (d.last_episode_to_air && d.last_episode_to_air.air_date) || null,
     lastEp: d.last_episode_to_air ? { s: d.last_episode_to_air.season_number, n: d.last_episode_to_air.episode_number } : null,

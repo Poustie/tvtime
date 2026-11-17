@@ -275,3 +275,51 @@ function maybeShowGuide() {
   showGuide(0);
   return true;
 }
+
+// ---- En-tête « intelligent » (v145) : se cache quand on descend, revient dès qu'on remonte. ----
+// L'en-tête (.page-head, 1er élément de la page) est collant ; on le décale de --hd-y (0 = visible, -hauteur = caché)
+// du même nombre de pixels que le défilement, comme la barre d'adresse d'un navigateur. Au repos, il finit de
+// s'ouvrir ou de se fermer en douceur.
+let _hd = { el: null, y: 0, last: 0, t0: 0, h: 0, idle: null, hash: null };
+function _hdSetup() {
+  const app = document.getElementById('app');
+  const el = app && app.firstElementChild;
+  if (_hd.el && _hd.el !== el) { _hd.el.classList.remove('hd-sticky', 'hd-stuck', 'hd-snap'); _hd.el.style.removeProperty('--hd-y'); }
+  const keep = _hd.hash === location.hash ? _hd.y : 0;   // même page redessinée : l'en-tête garde son état
+  _hd.el = null; _hd.y = 0; _hd.last = window.scrollY; _hd.hash = location.hash;
+  if (!el || !el.classList.contains('page-head')) return;
+  el.classList.add('hd-sticky');
+  const top = parseFloat(getComputedStyle(el).top) || 0;   // hauteur de l'encoche (iPhone)
+  _hd.el = el;
+  _hd.t0 = Math.max(0, el.offsetTop - top);                 // défilement à partir duquel il « colle »
+  _hd.h = el.offsetHeight + top + 36;                        // décalage pour le cacher entièrement (fond compris)
+  if (window.scrollY > _hd.t0) _hd.y = Math.max(-_hd.h, keep);
+  _hdApply();
+}
+function _hdApply() {
+  const el = _hd.el; if (!el) return;
+  el.style.setProperty('--hd-y', _hd.y + 'px');
+  el.classList.toggle('hd-stuck', window.scrollY > _hd.t0 + 1 && _hd.y > -_hd.h);
+}
+function _hdScroll() {
+  const el = _hd.el;
+  if (!el || !el.isConnected || document.getElementById('app').firstElementChild !== el) { _hdSetup(); return; }
+  const y = window.scrollY;
+  if (document.documentElement.classList.contains('zoomed')) { _hd.last = y; _hd.y = 0; _hdApply(); return; }
+  const d = Math.max(y, _hd.t0) - Math.max(_hd.last, _hd.t0);   // seul le défilement au-delà du haut de page compte
+  _hd.last = y;
+  if (y <= _hd.t0) _hd.y = 0;
+  else _hd.y = Math.min(0, Math.max(-_hd.h, _hd.y - d));
+  el.classList.remove('hd-snap');
+  _hdApply();
+  // Au repos : on termine le mouvement (à moitié sorti → il revient ; à moitié caché → il disparaît).
+  clearTimeout(_hd.idle);
+  _hd.idle = setTimeout(() => {
+    if (!_hd.el || _hd.y === 0 || _hd.y === -_hd.h || window.scrollY <= _hd.t0) return;
+    _hd.y = _hd.y > -_hd.h / 2 ? 0 : -_hd.h;
+    _hd.el.classList.add('hd-snap'); _hdApply();
+  }, 140);
+}
+let _hdRaf = 0;
+window.addEventListener('scroll', () => { if (!_hdRaf) _hdRaf = requestAnimationFrame(() => { _hdRaf = 0; _hdScroll(); }); }, { passive: true });
+window.addEventListener('resize', () => setTimeout(_hdSetup, 0));
