@@ -8,9 +8,9 @@
 .acct-hero .btn { min-height: 44px; }
 
 /* Trois chiffres */
-.acct-stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 16px 6px; margin: 0 0 22px; color: var(--text); text-decoration: none; }
+.acct-stats { display: grid; grid-template-columns: repeat(2, 1fr); row-gap: 16px; padding: 16px 6px; margin: 0 0 22px; color: var(--text); text-decoration: none; }
 .acct-stats > div { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0 4px; text-align: center; }
-.acct-stats > div + div { border-left: 1px solid var(--glass-line); }
+.acct-stats > div:nth-child(even) { border-left: 1px solid var(--glass-line); }
 .acct-stats b { font-size: calc(28px * var(--fs, 1)); font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--accent-ink, var(--accent)); }
 .acct-stats span { font-size: max(11px, calc(12px * var(--fs, 1))); color: var(--muted); }
 .acct-stats:active { transform: scale(.98); }

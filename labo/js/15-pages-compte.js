@@ -111,11 +111,15 @@ function recentViews(limit) {
     const p = kk.split('|');
     evs.set(kk, { t: 'e', sk: p.slice(0, -2).join('|'), s: +p[p.length - 2], n: +p[p.length - 1], at: String(v.at) });
   }
-  const list = [];
+  const bySh = new Map(); // une seule carte par série : son épisode vu le plus récemment + le nombre d'épisodes
   for (const e of evs.values()) {
     const sh = MODEL.shows.get(e.sk);
-    if (sh && sh.seenKeys.has(epKey(e.sk, e.s, e.n))) list.push(e);
+    if (!sh || !sh.seenKeys.has(epKey(e.sk, e.s, e.n))) continue;
+    const g = bySh.get(e.sk);
+    if (!g) bySh.set(e.sk, Object.assign({}, e, { count: 1 }));
+    else { g.count++; if (e.at > g.at) Object.assign(g, { s: e.s, n: e.n, at: e.at }); }
   }
+  const list = [...bySh.values()];
   for (const m of (DATA.movies || []).concat(userState.customMovies || [])) {
     if (movieStatus(m) !== 'watched' || !statValidDay(movieWatchedOf(m))) continue;
     list.push({ t: 'm', m, at: String(movieWatchedOf(m)) });
@@ -128,11 +132,12 @@ function recentCardHtml(e, i) {
   if (e.t === 'm') {
     const sc = movieScore(e.m), nm = movieDisplayName(e.m);
     return `<div class="rv-card" data-rv="${i}"><div class="poster" data-mposter="${esc(e.m.name)}"><div class="fallback-title">${esc(nm)}</div></div>
-      <div class="title">${esc(nm)}</div><div class="meta">Film${sc ? ' <span class="rv-react">' + reactBadge(sc) + '</span>' : ''}</div></div>`;
+      <div class="title">${esc(nm)}</div>${sc ? '<div class="meta"><span class="rv-react">' + reactBadge(sc) + '</span></div>' : ''}</div>`;
   }
   const sh = MODEL.shows.get(e.sk), nm = displayName(sh), sc = epScore(epKey(e.sk, e.s, e.n));
+  const what = (e.count > 1 ? 'Dernier : ' : '') + epSE(sh, e.s, e.n);
   return `<div class="rv-card" data-rv="${i}"><div class="poster" data-poster="${esc(sh.key)}"><div class="fallback-title">${esc(nm)}</div></div>
-    <div class="title">${esc(nm)}</div><div class="meta">${esc(epSE(sh, e.s, e.n))}${sc ? ' <span class="rv-react">' + reactBadge(sc) + '</span>' : ''}</div></div>`;
+    <div class="title">${esc(nm)}</div><div class="meta">${esc(what)}${sc ? ' <span class="rv-react">' + reactBadge(sc) + '</span>' : ''}</div></div>`;
 }
 // Photo + pseudo : profil Supabase s'il est chargé, sinon copie gardée sur l'appareil, sinon initiale du nom.
 function profileHeroHtml() {
@@ -158,7 +163,8 @@ route('profile', async (el) => {
   document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // Mon compte : pas de bannière de rappel
   buildModel();
   const shows = Array.from(MODEL.shows.values());
-  const watching = shows.filter(s => seriesCategory(s) === 'watching').length;
+  const following = shows.filter(s => s.followed && !s.archived).length;
+  const started = shows.filter(s => s.seenKeys.size > 0).length;
   const movies = (DATA.movies || []).concat(userState.customMovies || []);
   const moviesSeen = movies.filter(m => movieStatus(m) === 'watched').length;
   const seenCount = computeSeenCount();
@@ -177,9 +183,10 @@ route('profile', async (el) => {
     <div id="acctHero">${profileHeroHtml()}</div>
     ${sbSession ? '<div id="acctProfile"></div>' : ''}
     <a class="glass acct-stats" href="#/stats" aria-label="Voir les statistiques">
-      <div><b>${statFmtN(seenCount)}</b><span>Épisodes vus</span></div>
       <div><b>${statFmtN(moviesSeen)}</b><span>Films vus</span></div>
-      <div><b>${statFmtN(watching)}</b><span>Séries en cours</span></div>
+      <div><b>${statFmtN(following)}</b><span>Séries suivies</span></div>
+      <div><b>${statFmtN(seenCount)}</b><span>Épisodes vus</span></div>
+      <div><b>${statFmtN(started)}</b><span>Séries commencées</span></div>
     </a>
     ${recent.length ? `<div class="rv-sec"><h3>${icon('history')} Récemment vus</h3><div class="rv-row" id="rvRow">${recent.map(recentCardHtml).join('')}</div></div>` : ''}
     ${favSection('Séries favorites', '❤️', favSeries.length, 'favSeriesGrid', favSeries.map(s => cardHtml(s)).join(''))}
@@ -202,7 +209,7 @@ route('profile', async (el) => {
   if (rv) {
     rv.querySelectorAll('.rv-card').forEach(c => c.onclick = () => {
       const e = recent[+c.dataset.rv];
-      if (e.t === 'm') openMovie(e.m.name); else openEpisode(e.sk, e.s, e.n);
+      if (e.t === 'm') openMovie(e.m.name); else if (e.count > 1) openShow(e.sk); else openEpisode(e.sk, e.s, e.n);
     });
     hydratePosters(rv, recent.filter(e => e.t === 'e').map(e => MODEL.shows.get(e.sk)));
     hydrateMoviePosters(rv, recent.filter(e => e.t === 'm').map(e => e.m));

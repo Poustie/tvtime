@@ -258,7 +258,7 @@ function progressBarHtml(prog) {
 }
 
 // Bouton « ⋯ » (toujours visible) : ouvre la feuille d'actions de l'œuvre (voir openCardActions).
-const MORE_BTN = `<button type="button" class="card-more" aria-label="Actions">${icon('more')}</button>`;
+const MORE_BTN = '<button type="button" class="card-more" aria-label="Actions"><svg class="ic dots" viewBox="0 0 26 10" aria-hidden="true"><circle cx="4" cy="5" r="2.3"/><circle cx="13" cy="5" r="2.3"/><circle cx="22" cy="5" r="2.3"/></svg></button>';
 // Badge doré « ★ 8,1 » (note TMDB déjà en cache, aucune requête) ; vide si la note est inconnue.
 function ratingBadgeHtml(v) {
   v = Number(v);
@@ -273,7 +273,7 @@ function movieVote(m) {
 
 function cardHtml(s) {
   const seen = s.seenKeys.size;
-  const tag = isFavShow(s) ? 'Favori' : (s.archived ? 'Arrêtée' : '');
+  const tag = s.archived ? 'Arrêtée' : '';
   const name = displayName(s);
   const prog = showProgress(s, metaFor(s));
   return `<div class="show-card" data-key="${esc(s.key)}">

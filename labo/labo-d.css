@@ -16,8 +16,10 @@ svg.ic.f { fill: currentColor; }
 .sec-info svg.ic { width: 1.35em; height: 1.35em; vertical-align: middle; }
 
 /* Boutons ⋯ sur les affiches : points dessinés */
-.card-more svg.ic { width: 20px; height: 20px; vertical-align: middle; stroke-width: 2; fill: currentColor; }
-.card-more svg.ic * { stroke: currentColor; }
+.card-more svg.ic { width: 26px; height: 10px; vertical-align: middle; overflow: visible; filter: drop-shadow(0 0 1.5px rgba(0,0,0,.5)); }
+.card-more svg.ic * { fill: #fff; stroke: rgba(0,0,0,.55); stroke-width: 2.6; paint-order: stroke; transition: fill .15s; }
+.card-more::before { display: none; }
+.card-more:hover svg.ic *, .card-more:active svg.ic * { fill: var(--accent); }
 .exp-add svg.ic { width: 1.15em; height: 1.15em; vertical-align: middle; stroke-width: 2.2; }
 .badge-pin svg.ic { width: 1.2em; height: 1.2em; vertical-align: middle; }
 .badge-tag svg.ic { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: .15em; }
