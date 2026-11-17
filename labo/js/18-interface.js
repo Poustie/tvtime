@@ -288,18 +288,21 @@ function _hdSetup() {
   const keep = _hd.hash === location.hash ? _hd.y : 0;   // même page redessinée : l'en-tête garde son état
   _hd.el = null; _hd.y = 0; _hd.last = window.scrollY; _hd.hash = location.hash;
   if (!el || !el.classList.contains('page-head')) return;
+  // Collé exactement à sa place du haut de page : il ne bouge pas d'un pixel quand on commence à défiler.
+  const top = Math.max(0, Math.round(app.getBoundingClientRect().top + window.scrollY + (parseFloat(getComputedStyle(app).paddingTop) || 0)));
+  el.style.setProperty('--hd-top', top + 'px');
   el.classList.add('hd-sticky');
-  const top = parseFloat(getComputedStyle(el).top) || 0;   // hauteur de l'encoche (iPhone)
+  if (!el.querySelector(':scope > .hd-bg')) el.insertAdjacentHTML('afterbegin', '<div class="hd-bg" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>');
   _hd.el = el;
-  _hd.t0 = Math.max(0, el.offsetTop - top);                 // défilement à partir duquel il « colle »
-  _hd.h = el.offsetHeight + top + 36;                        // décalage pour le cacher entièrement (fond compris)
+  _hd.t0 = 0;                                                // il « colle » dès le premier pixel
+  _hd.h = el.offsetHeight + top + 48;                        // décalage pour le cacher entièrement (fond compris)
   if (window.scrollY > _hd.t0) _hd.y = Math.max(-_hd.h, keep);
   _hdApply();
 }
 function _hdApply() {
   const el = _hd.el; if (!el) return;
   el.style.setProperty('--hd-y', _hd.y + 'px');
-  el.classList.toggle('hd-stuck', window.scrollY > _hd.t0 + 1 && _hd.y > -_hd.h);
+  el.classList.toggle('hd-stuck', window.scrollY > 6 && _hd.y > -_hd.h);
 }
 function _hdScroll() {
   const el = _hd.el;

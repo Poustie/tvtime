@@ -1009,33 +1009,38 @@ main { padding-bottom: max(118px, calc(env(safe-area-inset-bottom) + 104px)); }
 /* Version de test : fine bande orange en haut de l'écran */
 html.labo body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 999; background: #ff8a00; pointer-events: none; }
 
-/* ---- En-tête qui se cache en descendant et revient dès qu'on remonte (v145) ----
-   L'en-tête de la page (titre, loupe, avatar) reste collé en haut ; 18-interface.js le décale (--hd-y)
-   au rythme du doigt. Une fois décollé du haut de page, il prend un fond flouté qui se fond dans les affiches. */
+/* ---- En-tête qui se cache en descendant et revient dès qu'on remonte (v145-v146) ----
+   L'en-tête de la page (titre, loupe, avatar) reste collé exactement là où il est en haut de page (--hd-top,
+   calculé par 18-interface.js) ; il est décalé de --hd-y au rythme du doigt. Une fois la page défilée, il prend
+   un fond flouté (.hd-bg) dont le flou et la couleur diminuent progressivement vers le bas : pas de bord net. */
 #app > .page-head.hd-sticky {
-  position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 35;
+  position: sticky; top: var(--hd-top, 16px); z-index: 35;
   transform: translate3d(0, var(--hd-y, 0px), 0);
   will-change: transform;
 }
 #app > .page-head.hd-sticky.hd-snap { transition: transform .26s cubic-bezier(.2,.8,.2,1); }
-#app > .page-head.hd-sticky::before, #app > .page-head.hd-sticky::after {
-  content: ''; position: absolute; z-index: -1; pointer-events: none;
-  left: calc(50% - 50vw); width: 100vw;
-  opacity: 0; transition: opacity .2s ease;
+.hd-bg {
   --hd-bg: 13,17,23;
+  position: absolute; z-index: -1; pointer-events: none;
+  left: calc(50% - 50vw); width: 100vw;
+  top: calc(-1 * var(--hd-top, 16px) - 2px); bottom: -46px;
+  opacity: 0; transition: opacity .22s ease;
 }
-/* Couche floutée derrière l'en-tête (jusque sous la barre d'état)… */
-#app > .page-head.hd-sticky::before {
-  top: calc(-1 * env(safe-area-inset-top, 0px) - 18px); bottom: -8px;
-  background: rgba(var(--hd-bg), .78);
-  -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%);
+html.amoled .hd-bg { --hd-bg: 0,0,0; }
+html.light .hd-bg { --hd-bg: 255,255,255; }
+#app > .page-head.hd-stuck .hd-bg { opacity: 1; }
+/* Flou par bandes : fort derrière l'en-tête, puis de plus en plus léger sous lui. */
+.hd-bg i { position: absolute; left: 0; right: 0; }
+.hd-bg i:nth-child(1) { top: 0; bottom: 46px; -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); }
+.hd-bg i:nth-child(2) { bottom: 34px; height: 12px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.hd-bg i:nth-child(3) { bottom: 23px; height: 11px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.hd-bg i:nth-child(4) { bottom: 12px; height: 11px; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.hd-bg i:nth-child(5) { bottom: 0; height: 12px; -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
+/* Voile de couleur par-dessus, qui s'efface en douceur. */
+.hd-bg::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(var(--hd-bg), .80) 0%, rgba(var(--hd-bg), .72) calc(100% - 64px),
+    rgba(var(--hd-bg), .42) calc(100% - 34px), rgba(var(--hd-bg), .14) calc(100% - 14px), rgba(var(--hd-bg), 0) 100%);
 }
-/* … puis un dégradé : les affiches disparaissent en fondu sous l'en-tête. */
-#app > .page-head.hd-sticky::after {
-  top: calc(100% + 8px); height: 28px;
-  background: linear-gradient(180deg, rgba(var(--hd-bg), .78), rgba(var(--hd-bg), 0));
-}
-html.amoled #app > .page-head.hd-sticky::before, html.amoled #app > .page-head.hd-sticky::after { --hd-bg: 0,0,0; }
-html.light #app > .page-head.hd-sticky::before, html.light #app > .page-head.hd-sticky::after { --hd-bg: 255,255,255; }
-#app > .page-head.hd-stuck::before, #app > .page-head.hd-stuck::after { opacity: 1; }
 html.zoomed #app > .page-head.hd-sticky { position: relative; top: 0; transform: none; }
+html.zoomed .hd-bg { display: none; }
