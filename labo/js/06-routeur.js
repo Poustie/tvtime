@@ -67,7 +67,7 @@ document.addEventListener('click', (ev) => {
   const c = ev.target.closest && ev.target.closest('.cast-item[data-pname]');
   if (c) openPerson(c.dataset.pid, c.dataset.pname);
 });
-const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'Prochains épisodes', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Mon compte', friends: 'Amis', settings: 'Réglages', custom: 'Personnalisation', changelog: 'Notes de version', episode: 'Épisode', preview: 'Aperçu' };
+const BACK_LABELS = { home: 'Séries', library: 'Bibliothèque', upnext: 'Prochains épisodes', explore: 'Explorer', movies: 'Films', lists: 'Listes', stats: 'Statistiques', profile: 'Mon compte', friends: 'Amis', settings: 'Réglages', custom: 'Personnalisation', changelog: 'Notes de version', friend: 'Profil de l’ami', episode: 'Épisode', preview: 'Aperçu' };
 // Label of the page « ← Retour » leads to (fallback = page used when there is no history).
 function backLabel(fallback) {
   const prev = navStack.length > 1 ? navStack[navStack.length - 2] : fallback;

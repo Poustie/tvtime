@@ -37,14 +37,17 @@ function buildShareSnapshot() {
     stats: { eps: computeSeenCount(), shows: shows.filter(s => s.seenKeys.size > 0).length, movies: movies.filter(m => movieStatus(m) === 'watched').length },
   };
   const posterOf = (s) => { const m = metaFor(s); return (m && m.poster) || s.poster || null; };
+  // Identifiant TMDB : permet à l'ami d'ouvrir la fiche de l'œuvre en touchant l'affiche.
+  const showIdOf = (s) => { const v = overrideShowTmdb(s) || (s.tvdbId != null ? tmdbCache.map[s.tvdbId] : null); return v ? Number(v) || null : null; };
+  const movieRecOf = (m) => (userState.movieTmdb && userState.movieTmdb[m.name]) || (tmdbCache.movies && tmdbCache.movies[m.name]) || null;
   if (shareOpt('watching')) {
     snap.watching = shows.filter(s => seriesCategory(s) === 'watching')
       .sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''))
       .slice(0, 30)
       .map(s => {
         const pass = isRewatching(s) && rewatchPass(s); // revisionnage : progression du nouveau passage
-        return pass ? { n: displayName(s), p: posterOf(s), d: pass.done, t: pass.total, r: 1 }
-          : { n: displayName(s), p: posterOf(s), d: s.seenKeys.size, t: airedTotal(metaFor(s)) || 0 };
+        return pass ? { n: displayName(s), p: posterOf(s), id: showIdOf(s), d: pass.done, t: pass.total, r: 1 }
+          : { n: displayName(s), p: posterOf(s), id: showIdOf(s), d: s.seenKeys.size, t: airedTotal(metaFor(s)) || 0 };
       });
   }
   if (shareOpt('recent')) {
@@ -74,8 +77,8 @@ function buildShareSnapshot() {
     snap.recent = groups.map(g => ({ k: g.k, n: g.n, e: g.e, c: g.c, at: g.at }));
   }
   if (shareOpt('favs')) {
-    snap.favShows = shows.filter(s => isFavShow(s)).slice(0, 15).map(s => ({ n: displayName(s), p: posterOf(s) }));
-    snap.favMovies = movies.filter(m => isFavMovie(m)).slice(0, 15).map(m => ({ n: movieDisplayName(m), p: (tmdbCache.movies && tmdbCache.movies[m.name] && tmdbCache.movies[m.name].poster) || null }));
+    snap.favShows = shows.filter(s => isFavShow(s)).slice(0, 15).map(s => ({ n: displayName(s), p: posterOf(s), id: showIdOf(s) }));
+    snap.favMovies = movies.filter(m => isFavMovie(m)).slice(0, 15).map(m => { const rec = movieRecOf(m); return { n: movieDisplayName(m), p: (tmdbCache.movies && tmdbCache.movies[m.name] && tmdbCache.movies[m.name].poster) || null, id: (rec && rec.id) || null }; });
   }
   return snap;
 }
@@ -547,6 +550,18 @@ route('friends', async (el) => {
   };
 });
 
+// Ouvre une œuvre vue sur le profil d'un ami : ma fiche si elle est dans ma bibliothèque, sinon l'aperçu TMDB.
+// Anciens résumés sans identifiant : on cherche par le nom (bibliothèque, puis recherche TMDB).
+async function openFriendWork(kind, id, name) {
+  const own = ownedLookup()({ media_type: kind, id: id || '', name, title: name });
+  if (own) { navTo((kind === 'movie' ? '#/movie/' : '#/show/') + encodeURIComponent(own)); return; }
+  let tid = parseInt(id, 10) || null;
+  if (!tid && name && hasKey()) {
+    try { const r = await tmdbFetch('/search/' + kind + '?query=' + encodeURIComponent(name)); tid = r && r.results && r.results[0] && r.results[0].id; } catch {}
+  }
+  if (tid) navTo('#/preview/' + kind + '/' + tid);
+  else toast('Impossible de trouver « ' + name + ' »');
+}
 route('friend', async (el, rest) => {
   const id = decodeURIComponent(rest[0] || '');
   const back = `<a class="btn ghost sm" href="#/friends">← Amis</a>`;
@@ -557,11 +572,11 @@ route('friend', async (el, rest) => {
   catch (e) { el.innerHTML = `${back}<div class="empty"><p>Impossible de charger (${esc(e.message || 'hors-ligne')}).</p></div>`; return; }
   if (!p) { el.innerHTML = `${back}<div class="empty">Ce profil n'est plus visible.</div>`; return; }
   const s = p.snapshot || {};
-  const tile = (it, bar) => {
+  const tile = (it, bar, kind) => {
     const po = safePoster(it.p);
-    return `<div class="fr-item"><div class="fr-poster">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : `<div class="fr-noimg">${esc(it.n)}</div>`}${bar || ''}</div><small>${esc(it.n)}</small></div>`;
+    return `<div class="fr-item" role="link" tabindex="0" data-kind="${kind}" data-id="${esc(it.id || '')}" data-n="${esc(it.n || '')}"><div class="fr-poster">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : `<div class="fr-noimg">${esc(it.n)}</div>`}${bar || ''}</div><small>${esc(it.n)}</small></div>`;
   };
-  const row = (title, items, barOf) => items && items.length ? `<div class="panel"><h3>${title}</h3><div class="fr-grid">${items.map(it => tile(it, barOf ? barOf(it) : '')).join('')}</div></div>` : '';
+  const row = (title, items, barOf, kind = 'tv') => items && items.length ? `<div class="panel"><h3>${title}</h3><div class="fr-grid">${items.map(it => tile(it, barOf ? barOf(it) : '', kind)).join('')}</div></div>` : '';
   // Même barre que sous nos propres affiches : orange = en cours, bleu sur fond vert = revisionnage.
   const friendBar = (it) => {
     const d = +it.d || 0, t = +it.t || 0;
@@ -580,8 +595,14 @@ route('friend', async (el, rest) => {
     ${row('▶️ En cours', s.watching, friendBar)}
     ${s.recent && s.recent.length ? `<div class="panel"><h3>${icon('clock')} Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
     ${row('❤️ Séries favorites', s.favShows)}
-    ${row('🎬 Films favoris', s.favMovies)}
+    ${row('🎬 Films favoris', s.favMovies, null, 'movie')}
     <p style="margin-top:14px"><button class="btn ghost sm" id="frUnfollow">Retirer ${esc(p.pseudo)} de mes amis</button></p>`;
+  // Toucher une affiche : fiche de l'œuvre (la mienne si je l'ai, sinon l'aperçu TMDB).
+  el.querySelectorAll('.fr-item[data-kind]').forEach(t => {
+    const go = () => openFriendWork(t.dataset.kind, t.dataset.id, t.dataset.n);
+    t.onclick = go;
+    t.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  });
   el.querySelector('#frUnfollow').onclick = async (ev) => {
     if (!confirm('Retirer ' + p.pseudo + ' de vos amis ?')) return;
     ev.currentTarget.disabled = true;

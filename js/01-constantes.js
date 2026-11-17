@@ -15,6 +15,11 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 73, date: '17 novembre 2026', title: 'Profil des amis et séries arrêtées', items: [
+    'Profil d’un ami : touchez une série ou un film pour ouvrir sa fiche (la vôtre si vous l’avez, sinon un aperçu).',
+    'Séries arrêtées : leur barre de progression est maintenant rouge.',
+    'L’en-tête suit exactement le défilement : si vous remontez doucement, il apparaît doucement.',
+  ] },
   { id: 72, date: '17 novembre 2026', title: 'Noms des saisons et en-tête', items: [
     'Fiches séries : les saisons qui ont un vrai nom l’affichent (ex. « Tokyo Ghoul √A »), avec « Saison 2 » juste en dessous.',
     'En-tête : il se cache quand vous descendez et revient dès que vous remontez, les affiches passant en fondu derrière.',

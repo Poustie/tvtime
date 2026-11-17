@@ -209,6 +209,7 @@ main {
 .card-progress .bar.orange { background: #f59e0b; }
 .card-progress .bar.green  { background: #22c55e; }
 .card-progress .bar.purple { background: #a855f7; }
+.card-progress .bar.red    { background: #ef4444; }
 .card-progress .bar-base { position: absolute; inset: 0; opacity: .4; }
 .card-progress .bar-base.green  { background: #22c55e; }
 .card-progress .bar-base.purple { background: #a855f7; }
@@ -662,7 +663,9 @@ html.amoled .bottom-nav { background: rgba(0,0,0,.94); }
 .feed-line { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .feed-line:last-child { border-bottom: 0; }
 .fr-grid { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; touch-action: pan-x pan-y; }
-.fr-item { width: 96px; flex: none; }
+.fr-item { width: 96px; flex: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.fr-item:active .fr-poster { transform: scale(.97); }
+.fr-poster { transition: transform .12s ease; }
 .fr-poster { position: relative; border-radius: 8px; overflow: hidden; background: var(--bg3); }
 .fr-item img, .fr-noimg { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; background: var(--bg3); display: block; }
 .fr-noimg { display: flex; align-items: center; justify-content: center; text-align: center; font-size: max(11px, calc(12px * var(--fs, 1))); padding: 6px; color: var(--muted); }

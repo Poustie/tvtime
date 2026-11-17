@@ -241,6 +241,8 @@ function showProgress(s, m) {
   const total = airedTotal(m);
   const seen = s.seenKeys.size;
   if (!total || seen <= 0) return null;
+  // Série arrêtée : barre rouge (même longueur que la progression).
+  if (s.archived) return { pct: Math.max(4, Math.min(100, Math.round(seen / total * 100))), cls: 'red' };
   if (seen >= total) {
     const ended = m.status === 'Ended' || m.status === 'Canceled';
     // Revisionnage : barre « terminée » en fond + progression du nouveau visionnage par-dessus.
