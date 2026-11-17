@@ -94,52 +94,119 @@ route('person', async (el, rest) => {
 });
 
 //////////////////////// Profil (hub) ////////////////////////
+// Les N derniers épisodes / films vus, du plus récent au plus ancien. Dates réelles seulement (statValidDay écarte 1970 / 0001) :
+// épisodes = DATA.seen[].seenAt (export TV Time) et userState.seenAdd[clé].at (ajouts faits dans l'app) ; films = movieWatchedOf (movieWatchedAt ou export).
+function recentViews(limit) {
+  buildModel();
+  const evs = new Map();
+  for (const r of DATA.seen || []) {
+    if (r.showId == null || r.showId === '') continue;
+    const kk = epKey(r.showId, r.season, r.number);
+    if (userState.seenRemove[kk] || !statValidDay(r.seenAt)) continue;
+    const o = evs.get(kk), at = String(r.seenAt);
+    if (!o || at < o.at) evs.set(kk, { t: 'e', sk: r.showId, s: r.season, n: r.number, at });
+  }
+  for (const [kk, v] of Object.entries(userState.seenAdd || {})) {
+    if (!v || !statValidDay(v.at)) continue;
+    const p = kk.split('|');
+    evs.set(kk, { t: 'e', sk: p.slice(0, -2).join('|'), s: +p[p.length - 2], n: +p[p.length - 1], at: String(v.at) });
+  }
+  const list = [];
+  for (const e of evs.values()) {
+    const sh = MODEL.shows.get(e.sk);
+    if (sh && sh.seenKeys.has(epKey(e.sk, e.s, e.n))) list.push(e);
+  }
+  for (const m of (DATA.movies || []).concat(userState.customMovies || [])) {
+    if (movieStatus(m) !== 'watched' || !statValidDay(movieWatchedOf(m))) continue;
+    list.push({ t: 'm', m, at: String(movieWatchedOf(m)) });
+  }
+  list.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+  return list.slice(0, limit);
+}
+// Un épisode / film de la rangée « Récemment vus » : affiche, titre, S01E02, réaction.
+function recentCardHtml(e, i) {
+  if (e.t === 'm') {
+    const sc = movieScore(e.m), nm = movieDisplayName(e.m);
+    return `<div class="rv-card" data-rv="${i}"><div class="poster" data-mposter="${esc(e.m.name)}"><div class="fallback-title">${esc(nm)}</div></div>
+      <div class="title">${esc(nm)}</div><div class="meta">Film${sc ? ' <span class="rv-react">' + reactBadge(sc) + '</span>' : ''}</div></div>`;
+  }
+  const sh = MODEL.shows.get(e.sk), nm = displayName(sh), sc = epScore(epKey(e.sk, e.s, e.n));
+  return `<div class="rv-card" data-rv="${i}"><div class="poster" data-poster="${esc(sh.key)}"><div class="fallback-title">${esc(nm)}</div></div>
+    <div class="title">${esc(nm)}</div><div class="meta">${esc(epSE(sh, e.s, e.n))}${sc ? ' <span class="rv-react">' + reactBadge(sc) + '</span>' : ''}</div></div>`;
+}
+// Photo + pseudo : profil Supabase s'il est chargé, sinon copie gardée sur l'appareil, sinon initiale du nom.
+function profileHeroHtml() {
+  let c = null;
+  try { c = JSON.parse(localStorage.getItem('tvtime-acct') || 'null'); } catch {}
+  const p = sbSession ? (sbProfile || c) : null;
+  const name = (p && p.pseudo) || userDisplayName() || '?';
+  const av = p ? avatarHtml(p.avatar, name, 'xl') : '<span class="avatar xl">' + esc(name.slice(0, 1).toUpperCase()) + '</span>';
+  return `<div class="acct-hero"><div class="acct-av">${av}</div><div class="acct-name">${esc(name)}</div>
+    <button class="btn sm ghost" id="acctEdit">${sbSession ? icon('edit') + ' Modifier le profil' : icon('user') + ' Se connecter'}</button></div>`;
+}
+const PROFILE_MENU = [
+  ['library', '#/library', 'Bibliothèque', 'Toutes vos œuvres — séries &amp; films'],
+  ['chart', '#/stats', 'Statistiques', 'Séries &amp; films'],
+  ['list', '#/lists', 'Listes', 'Créez et modifiez vos listes'],
+  ['palette', '#/custom', 'Personnalisation', 'Couleurs, thème, tailles, accueil'],
+  ['gear', '#/settings', 'Réglages', 'Clé TMDB, synchronisation, sauvegarde'],
+  ['sparkle', '#/changelog', 'Notes de version', 'Les nouveautés de chaque mise à jour'],
+  ['book', '#/profile', 'Revoir le guide', 'Une visite rapide de l’application', 'guideCard'],
+];
 route('profile', async (el) => {
   libBackTo = '#/profile';
   document.querySelectorAll('.backup-banner').forEach(n => n.remove()); // Mon compte : pas de bannière de rappel
   buildModel();
   const shows = Array.from(MODEL.shows.values());
-  const following = shows.filter(s => s.followed && !s.archived).length;
-  const started = shows.filter(s => s.seenKeys.size > 0).length;
+  const watching = shows.filter(s => seriesCategory(s) === 'watching').length;
   const movies = (DATA.movies || []).concat(userState.customMovies || []);
   const moviesSeen = movies.filter(m => movieStatus(m) === 'watched').length;
   const seenCount = computeSeenCount();
+  const recent = recentViews(10);
   const favSeries = shows.filter(s => isFavShow(s)).sort((a, b) => displayName(a).localeCompare(displayName(b)));
   const favMovies = movies.filter(m => isFavMovie(m)).sort((a, b) => a.name.localeCompare(b.name));
-  const favSection = (title, icon, count, gridId, inner) => `
+  const favSection = (title, ic, count, gridId, inner) => `
     <div class="panel">
-      <h3>${emojiIcon(icon)} ${title} <span class="count" style="color:var(--muted);font-weight:400">· ${count}</span></h3>
+      <h3>${emojiIcon(ic)} ${title} <span class="count" style="color:var(--muted);font-weight:400">· ${count}</span></h3>
       ${count ? `<div class="grid" id="${gridId}">${inner}</div>` : `<p class="hint" style="color:var(--muted)">Aucun favori pour l'instant. Ouvrez une œuvre puis touchez ♡ « Ajouter aux favoris ».</p>`}
     </div>`;
+  const menu = PROFILE_MENU.map(([ic, href, t, sub, id]) => `<a class="am-row" href="${href}"${id ? ` id="${id}"` : ''}><span class="am-ic">${icon(ic)}</span><span class="am-tx"><b>${t}</b><small>${sub}</small></span><span class="am-chev">${icon('chev')}</span></a>`).join('');
   el.innerHTML = `
     ${backBtn('#/home')}
-    <div class="page-head"><h1>Mon compte</h1><span class="sub">Bonjour ${esc(userDisplayName())} 👋</span></div>
+    <div class="page-head"><h1>Mon compte</h1></div>
+    <div id="acctHero">${profileHeroHtml()}</div>
     ${sbSession ? '<div id="acctProfile"></div>' : ''}
-    ${sbPanelHtml()}
-    ${badgeCardHtml()}
-    <div class="stat-grid">
-      <div class="stat-card"><div class="k">Épisodes vus</div><div class="v">${seenCount}</div></div>
-      <div class="stat-card"><div class="k">Séries suivies</div><div class="v">${following}</div></div>
-      <div class="stat-card"><div class="k">Séries commencées</div><div class="v">${started}</div></div>
-      <div class="stat-card"><div class="k">Films vus</div><div class="v">${moviesSeen}</div></div>
-    </div>
-    <div class="profile-menu" style="margin-bottom:22px">
-      <a class="menu-card" href="#/library"><span class="ic">${emojiIcon('📚')}</span><b>Bibliothèque</b><small>Toutes vos œuvres — séries &amp; films</small></a>
-      <a class="menu-card" href="#/stats"><span class="ic">${emojiIcon('📊')}</span><b>Statistiques</b><small>Séries &amp; films</small></a>
-      <a class="menu-card" href="#/lists"><span class="ic">${emojiIcon('📃')}</span><b>Listes</b><small>Créez et modifiez vos listes</small></a>
-      <a class="menu-card" href="#/custom"><span class="ic">${emojiIcon('🎨')}</span><b>Personnalisation</b><small>Couleurs, thème, tailles, accueil</small></a>
-      <a class="menu-card" href="#/settings"><span class="ic">${emojiIcon('⚙️')}</span><b>Réglages</b><small>Clé TMDB, synchronisation, sauvegarde</small></a>
-      <a class="menu-card" href="#/changelog"><span class="ic">${emojiIcon('🆕')}</span><b>Notes de version</b><small>Les nouveautés de chaque mise à jour</small></a>
-      <a class="menu-card" href="#/profile" id="guideCard"><span class="ic">${emojiIcon('📘')}</span><b>Revoir le guide</b><small>Une visite rapide de l’application</small></a>
-    </div>
+    <a class="glass acct-stats" href="#/stats" aria-label="Voir les statistiques">
+      <div><b>${statFmtN(seenCount)}</b><span>Épisodes vus</span></div>
+      <div><b>${statFmtN(moviesSeen)}</b><span>Films vus</span></div>
+      <div><b>${statFmtN(watching)}</b><span>Séries en cours</span></div>
+    </a>
+    ${recent.length ? `<div class="rv-sec"><h3>${icon('history')} Récemment vus</h3><div class="rv-row" id="rvRow">${recent.map(recentCardHtml).join('')}</div></div>` : ''}
     ${favSection('Séries favorites', '❤️', favSeries.length, 'favSeriesGrid', favSeries.map(s => cardHtml(s)).join(''))}
-    ${favSection('Films favoris', '🎬', favMovies.length, 'favMoviesGrid', favMovies.map(m => movieCardHtml(m)).join(''))}`;
+    ${favSection('Films favoris', '🎬', favMovies.length, 'favMoviesGrid', favMovies.map(m => movieCardHtml(m)).join(''))}
+    <div class="acct-quiet">${badgeCardHtml()}<div id="acctSb">${sbPanelHtml()}</div></div>
+    <div class="glass acct-menu">${menu}</div>`;
 
   sbWirePanel(el);
   const gc = el.querySelector('#guideCard');
   if (gc) gc.onclick = (ev) => { ev.preventDefault(); showGuide(0); };
   const ap = el.querySelector('#acctProfile');
-  if (ap) fillAccountProfile(ap);
+  const goEdit = () => { const t = ap || el.querySelector('#acctSb'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  const edit = el.querySelector('#acctEdit');
+  if (edit) edit.onclick = goEdit;
+  if (ap) fillAccountProfile(ap).then(() => {
+    const h = el.querySelector('#acctHero');
+    if (h && sbProfile) { h.innerHTML = profileHeroHtml(); const e2 = h.querySelector('#acctEdit'); if (e2) e2.onclick = goEdit; }
+  });
+  const rv = el.querySelector('#rvRow');
+  if (rv) {
+    rv.querySelectorAll('.rv-card').forEach(c => c.onclick = () => {
+      const e = recent[+c.dataset.rv];
+      if (e.t === 'm') openMovie(e.m.name); else openEpisode(e.sk, e.s, e.n);
+    });
+    hydratePosters(rv, recent.filter(e => e.t === 'e').map(e => MODEL.shows.get(e.sk)));
+    hydrateMoviePosters(rv, recent.filter(e => e.t === 'm').map(e => e.m));
+  }
   const sg = el.querySelector('#favSeriesGrid');
   if (sg) {
     sg.querySelectorAll('.show-card').forEach(c => c.onclick = () => openShow(c.dataset.key));

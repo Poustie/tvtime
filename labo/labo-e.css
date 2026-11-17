@@ -1,0 +1,46 @@
+/* Labo E — page « Mon compte » (proposition 6) : photo en grand, chiffres, récemment vus, menu façon réglages */
+
+/* Photo + pseudo */
+.acct-hero { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 18px; }
+.acct-av { padding: 3px; border-radius: 50%; background: var(--accent); box-shadow: 0 8px 26px color-mix(in srgb, var(--accent) 35%, transparent); }
+.acct-av .avatar.xl { width: 96px; height: 96px; font-size: calc(38px * var(--fs, 1)); border: 3px solid var(--bg); box-sizing: border-box; display: flex; }
+.acct-name { font-size: calc(22px * var(--fs, 1)); font-weight: 800; letter-spacing: -.01em; text-align: center; overflow-wrap: anywhere; }
+.acct-hero .btn { min-height: 44px; }
+
+/* Trois chiffres */
+.acct-stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 16px 6px; margin: 0 0 22px; color: var(--text); text-decoration: none; }
+.acct-stats > div { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0 4px; text-align: center; }
+.acct-stats > div + div { border-left: 1px solid var(--glass-line); }
+.acct-stats b { font-size: calc(28px * var(--fs, 1)); font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--accent-ink, var(--accent)); }
+.acct-stats span { font-size: max(11px, calc(12px * var(--fs, 1))); color: var(--muted); }
+.acct-stats:active { transform: scale(.98); }
+
+/* Récemment vus */
+.rv-sec { margin: 0 0 22px; }
+.rv-sec h3 { margin: 0 0 10px; font-size: calc(17px * var(--fs, 1)); }
+.rv-sec h3 svg.ic { color: var(--accent-ink, var(--accent)); margin-right: .2em; }
+.rv-row { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding: 2px 2px 8px; margin: 0 -2px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.rv-row::-webkit-scrollbar { display: none; }
+.rv-card { flex: none; width: 108px; scroll-snap-align: start; cursor: pointer; }
+.rv-card .poster { width: 108px; aspect-ratio: 2 / 3; }
+.rv-card .title { margin-top: 6px; font-size: max(11px, calc(12px * var(--fs, 1))); font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rv-card .meta { font-size: max(11px, calc(11px * var(--fs, 1))); color: var(--muted); }
+.rv-react { font-size: calc(14px * var(--fs, 1)); margin-left: 2px; }
+
+/* Blocs plus discrets (badges + sauvegarde en ligne) */
+.acct-quiet { margin: 6px 0 22px; opacity: .92; }
+.acct-quiet .panel { margin-bottom: 12px; }
+
+/* Menu façon réglages iPhone */
+.acct-menu { padding: 4px 0; margin: 0 0 24px; overflow: hidden; }
+.am-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; min-height: 56px; color: var(--text); text-decoration: none; position: relative; }
+.am-row + .am-row::before { content: ''; position: absolute; top: 0; left: 62px; right: 0; border-top: 1px solid var(--glass-line); }
+.am-row:active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.am-ic { flex: none; width: 34px; height: 34px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-ink, var(--accent)); }
+.am-ic svg.ic { width: 20px; height: 20px; vertical-align: middle; }
+.am-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.am-tx b { font-size: calc(16px * var(--fs, 1)); font-weight: 600; }
+.am-tx small { font-size: max(11px, calc(12px * var(--fs, 1))); color: var(--muted); }
+.am-chev { flex: none; color: var(--muted); display: inline-flex; }
+.am-chev svg.ic { width: 18px; height: 18px; vertical-align: middle; }
