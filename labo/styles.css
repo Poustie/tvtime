@@ -1023,24 +1023,29 @@ html.labo body::before { content: ''; position: fixed; top: 0; left: 0; right: 0
   --hd-bg: 13,17,23;
   position: absolute; z-index: -1; pointer-events: none;
   left: calc(50% - 50vw); width: 100vw;
-  top: calc(-1 * var(--hd-top, 16px) - 2px); bottom: -46px;
+  top: calc(-1 * var(--hd-top, 16px) - 2px); bottom: -64px;
   opacity: 0; transition: opacity .22s ease;
 }
 html.amoled .hd-bg { --hd-bg: 0,0,0; }
 html.light .hd-bg { --hd-bg: 255,255,255; }
 #app > .page-head.hd-stuck .hd-bg { opacity: 1; }
-/* Flou par bandes : fort derrière l'en-tête, puis de plus en plus léger sous lui. */
-.hd-bg i { position: absolute; left: 0; right: 0; }
-.hd-bg i:nth-child(1) { top: 0; bottom: 46px; -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); }
-.hd-bg i:nth-child(2) { bottom: 34px; height: 12px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
-.hd-bg i:nth-child(3) { bottom: 23px; height: 11px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-.hd-bg i:nth-child(4) { bottom: 12px; height: 11px; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
-.hd-bg i:nth-child(5) { bottom: 0; height: 12px; -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
-/* Voile de couleur par-dessus, qui s'efface en douceur. */
+/* Flou progressif : 4 couches de flou de plus en plus fort, chacune s'effaçant en dégradé (masque) un peu
+   plus haut que la précédente → le flou diminue en continu vers le bas, sans ligne visible. */
+.hd-bg i { position: absolute; inset: 0; }
+.hd-bg i:nth-child(1) { -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%); }
+.hd-bg i:nth-child(2) { -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 60%, transparent 88%); mask-image: linear-gradient(180deg, #000 0%, #000 60%, transparent 88%); }
+.hd-bg i:nth-child(3) { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 50%, transparent 76%); mask-image: linear-gradient(180deg, #000 0%, #000 50%, transparent 76%); }
+.hd-bg i:nth-child(4) { -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 42%, transparent 64%); mask-image: linear-gradient(180deg, #000 0%, #000 42%, transparent 64%); }
+.hd-bg i:nth-child(5) { display: none; }
+/* Voile de couleur par-dessus, qui s'efface en douceur (courbe adoucie). */
 .hd-bg::after {
   content: ''; position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(var(--hd-bg), .80) 0%, rgba(var(--hd-bg), .72) calc(100% - 64px),
-    rgba(var(--hd-bg), .42) calc(100% - 34px), rgba(var(--hd-bg), .14) calc(100% - 14px), rgba(var(--hd-bg), 0) 100%);
+  background: linear-gradient(180deg, rgba(var(--hd-bg), .80) 0%, rgba(var(--hd-bg), .74) 45%, rgba(var(--hd-bg), .58) 60%,
+    rgba(var(--hd-bg), .38) 72%, rgba(var(--hd-bg), .2) 83%, rgba(var(--hd-bg), .07) 92%, rgba(var(--hd-bg), 0) 100%);
 }
 html.zoomed #app > .page-head.hd-sticky { position: relative; top: 0; transform: none; }
 html.zoomed .hd-bg { display: none; }

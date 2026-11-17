@@ -295,7 +295,7 @@ function _hdSetup() {
   if (!el.querySelector(':scope > .hd-bg')) el.insertAdjacentHTML('afterbegin', '<div class="hd-bg" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>');
   _hd.el = el;
   _hd.t0 = 0;                                                // il « colle » dès le premier pixel
-  _hd.h = el.offsetHeight + top + 48;                        // décalage pour le cacher entièrement (fond compris)
+  _hd.h = el.offsetHeight + top + 66;                        // décalage pour le cacher entièrement (fond compris)
   if (window.scrollY > _hd.t0) _hd.y = Math.max(-_hd.h, keep);
   _hdApply();
 }
