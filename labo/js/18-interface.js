@@ -141,6 +141,8 @@ function applyTheme() {
   root.style.setProperty('--fs', String(TEXT_SIZES[p.textSize] || 1));
   root.classList.toggle('poster-s', p.posterSize === 's');
   root.classList.toggle('poster-l', p.posterSize === 'l');
+  const rp = ['tl', 'tr', 'bl', 'off'].includes(p.ratePos) ? p.ratePos : 'tl'; // note TMDB sur les affiches : emplacement ou masquée
+  for (const k of ['tl', 'tr', 'bl', 'off']) root.classList.toggle('rate-' + k, k === rp);
   // La barre d'état du téléphone (heure/batterie) suit cette couleur.
   const m = document.querySelector('meta[name="theme-color"]');
   if (m) m.setAttribute('content', t === 'amoled' ? '#000000' : t === 'light' ? '#f4f5f7' : '#0e1116');
@@ -166,6 +168,10 @@ route('custom', async (el) => {
     <div class="panel"><h3>Taille des affiches</h3>
       <div class="chips">${chip('posterSize', 's', 'Petites', p.posterSize || 'm')}${chip('posterSize', 'm', 'Normales', p.posterSize || 'm')}${chip('posterSize', 'l', 'Grandes', p.posterSize || 'm')}</div>
       <p class="hint" style="color:var(--muted)">Sur téléphone : 4, 3 ou 2 affiches par ligne.</p>
+    </div>
+    <div class="panel"><h3>Note sur les affiches</h3>
+      <div class="chips">${chip('ratePos', 'tl', 'En haut à gauche', p.ratePos || 'tl')}${chip('ratePos', 'tr', 'En haut à droite', p.ratePos || 'tl')}${chip('ratePos', 'bl', 'En bas à gauche', p.ratePos || 'tl')}${chip('ratePos', 'off', 'Masquer', p.ratePos || 'tl')}</div>
+      <p class="hint" style="color:var(--muted)">La note moyenne du public (TMDB), en doré : « ★ 8,1 ».</p>
     </div>
     <div class="panel"><h3>Onglet à l'ouverture</h3>
       <div class="chips">${Object.entries(START_TABS).map(([k, l]) => chip('startTab', k, l, START_TABS[p.startTab] ? p.startTab : 'home')).join('')}</div>

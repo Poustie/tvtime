@@ -50,3 +50,13 @@ html.light .poster, html.light .exp-row .exp-hit .ps-poster { box-shadow: 0 6px 
   #modalRoot .backdrop, #modalRoot .backdrop .modal, #modalRoot .backdrop.sheet-bd .modal { animation: none; }
   .show-card:active .poster, .exp-hit:active .ps-poster, .btn:active, .chip:active, .sheet-item:active, .card-more:active, .exp-add:active, .acct-btn:active, .search-btn:active { transform: none; }
 }
+
+/* Note sur les affiches : emplacement choisi dans Personnalisation (html.rate-tl / rate-tr / rate-bl / rate-off) */
+html.rate-off .badge-rate { display: none; }
+html.rate-tl .badge-rate { top: 8px !important; bottom: auto !important; left: 8px !important; right: auto !important; }
+html.rate-tr .badge-rate { top: 8px !important; bottom: auto !important; right: 8px !important; left: auto !important; }
+/* sous l'étiquette déjà présente au même coin (Arrêtée, Série / Film, épingle, compteur) */
+html.rate-tl .poster:has(> .badge-tag) .badge-rate, html.rate-tl .ps-poster:has(> .badge-tag) .badge-rate { top: 36px !important; }
+html.rate-tr .poster:has(> .badge-pin, > .badge-count) .badge-rate { top: 36px !important; }
+html.rate-tl .about-block .badge-rate, html.rate-tr .about-block .badge-rate { top: 4px !important; }
+html.rate-tl .about-block .ps-poster:has(> .badge-tag) .badge-rate { top: 26px !important; }
