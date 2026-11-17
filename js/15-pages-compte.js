@@ -147,7 +147,7 @@ function profileHeroHtml() {
   const name = (p && p.pseudo) || userDisplayName() || '?';
   const av = p ? avatarHtml(p.avatar, name, 'xl') : '<span class="avatar xl">' + esc(name.slice(0, 1).toUpperCase()) + '</span>';
   return `<div class="acct-hero"><div class="acct-av">${av}</div><div class="acct-name">${esc(name)}</div>
-    <button class="btn sm ghost" id="acctEdit">${sbSession ? icon('edit') + ' Modifier le profil' : icon('user') + ' Se connecter'}</button></div>`;
+    <button class="btn sm ghost${sbSession && _acctEditOpen ? ' on' : ''}" id="acctEdit">${sbSession ? icon('edit') + ' Modifier le profil' : icon('user') + ' Se connecter'}</button></div>`;
 }
 let _acctEditOpen = false; // bloc « Modifier le profil » ouvert (gardé quand la page se redessine)
 const PROFILE_MENU = [

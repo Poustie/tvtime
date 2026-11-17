@@ -265,11 +265,10 @@ async function fillAccountProfile(box) {
   }
   sbCacheAccount();
   const pub = sbProfile.is_public;
+  // La photo et le pseudo sont déjà en grand en haut de Mon compte : ici, seulement le bouton pour changer la photo.
   box.innerHTML = `<div class="panel"><h3>Mon profil</h3>
-      <div style="display:flex;align-items:center;gap:14px">
-        <label style="cursor:pointer">${avatarHtml(sbProfile.avatar, sbProfile.pseudo, 'lg')}<input type="file" id="frAvatar" accept="image/*" hidden><span class="sub" style="display:block;text-align:center;font-size:11px">Changer la photo</span></label>
-        <div><b style="font-size:18px">${esc(sbProfile.pseudo)}</b><div class="hint" style="color:var(--muted)">${pub ? '🟢 Trouvable par pseudo' : '🔒 Introuvable'}</div></div>
-      </div>
+      <label class="btn sm ghost pf-photo-btn" style="cursor:pointer">${icon('user')} Changer la photo<input type="file" id="frAvatar" accept="image/*" hidden></label>`
+    + `
       <label class="check-row" style="display:flex;gap:10px;margin-top:12px;cursor:pointer"><input type="checkbox" id="frPublic" ${pub ? 'checked' : ''}><span>Me rendre trouvable par mon pseudo</span></label>
       <p class="hint" style="color:var(--muted);margin:6px 0 0 26px">Votre pseudo et votre photo permettent à vos amis de vous trouver ; vos séries et votre activité ne sont visibles que par vos amis.</p>
       ${pub ? `<div style="margin-left:26px">

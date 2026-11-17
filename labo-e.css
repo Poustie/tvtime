@@ -62,3 +62,4 @@ html.light #acctProfile .panel { background: rgba(255,255,255,.75); border-color
 #acctProfile div[style*="26px"] .check-row { margin-top: 8px !important; }
 #acctProfile #frPublish { margin-top: 10px; }
 #acctEdit.on { border-color: var(--accent); color: var(--accent-ink, var(--accent)); }
+#acctProfile .pf-photo-btn { display: inline-flex; align-items: center; gap: 6px; }
