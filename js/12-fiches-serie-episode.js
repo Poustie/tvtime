@@ -119,6 +119,9 @@ function refreshShowHeader(sh) {
   if (c) c.textContent = showCountText(sh, metaFor(sh));
   const r = document.getElementById('showRwChip');
   if (r) { const on = isRewatching(sh); r.hidden = !on; if (on) r.textContent = showRewatchText(sh); }
+  // Carte « Votre avis » : déverrouillée dès le 1er épisode coché sur la fiche (sinon smiley grisé), reverrouillée à 0.
+  const av = document.querySelector('#app .show-react');
+  if (av) { const locked = !sh.seenKeys.size; if (av.classList.contains('is-locked') !== locked) setReactLocked(av, locked, showScore(sh)); }
 }
 let _nextLineModalFn = null;
 // Ligne « Prochain épisode » sous l'en-tête de la fiche série (même calcul que « Prochains épisodes » : nextEpisodeInfo).

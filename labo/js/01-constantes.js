@@ -15,6 +15,10 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 74, date: '18 novembre 2026', title: 'Deux corrections', items: [
+    'Votre avis : après avoir coché le 1er épisode d’une série, le smiley choisi s’affiche bien en couleur (il restait grisé).',
+    'Fenêtres et menu « ⋯ » : Chrome ne sélectionne plus un mot de la page quand on appuie sur un bouton (ex. « Chercher une affiche »).',
+  ] },
   { id: 73, date: '17 novembre 2026', title: 'Profil des amis et séries arrêtées', items: [
     'Profil d’un ami : touchez une série ou un film pour ouvrir sa fiche (la vôtre si vous l’avez, sinon un aperçu).',
     'Séries arrêtées : leur barre de progression est maintenant rouge.',

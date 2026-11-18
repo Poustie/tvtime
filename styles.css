@@ -1052,3 +1052,9 @@ html.light .hd-bg { --hd-bg: 255,255,255; }
 }
 html.zoomed #app > .page-head.hd-sticky { position: relative; top: 0; transform: none; }
 html.zoomed .hd-bg { display: none; }
+
+/* Fenêtres et feuilles d'actions : aucun texte sélectionnable (sinon Chrome Android peut prendre un appui pour
+   « Toucher pour rechercher » et sélectionner un mot au lieu d'appuyer sur le bouton). Les champs de saisie restent utilisables. */
+.modal h2, .sheet-list, .sheet-item, .sheet-item *, .modal .row .btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+body:has(#modalRoot > .backdrop) #app, body:has(#modalRoot > .backdrop) .bottom-nav { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.sheet-item { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
