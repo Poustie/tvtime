@@ -15,6 +15,9 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 75, date: '23 novembre 2026', title: 'Onglets Films et Explorer réparés', items: [
+    'Après certaines actions (ex. « Arrêter le revisionnage »), les onglets Films et Explorer ne répondaient plus : c’est corrigé.',
+  ] },
   { id: 74, date: '18 novembre 2026', title: 'Deux corrections', items: [
     'Votre avis : après avoir coché le 1er épisode d’une série, le smiley choisi s’affiche bien en couleur (il restait grisé).',
     'Fenêtres et menu « ⋯ » : Chrome ne sélectionne plus un mot de la page quand on appuie sur un bouton (ex. « Chercher une affiche »).',

@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell, TMDB posters and TMDB API responses
    so the app loads instantly and works offline (posters stay cached across updates). */
-const VERSION = 'montvtime-v150';
+const VERSION = 'montvtime-v151';
 const SHELL = 'shell-' + VERSION;
 // Caches permanents : sans numéro de version, donc conservés à chaque mise à jour de l'app
 const IMG = 'img-v1';
