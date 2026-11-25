@@ -39,6 +39,10 @@ let userState = {
   userLists: [],   // [{id,name,shows:[key],movies:[name]}] listes personnalisables
   lists: null,     // null = use baseline lists; else array
   seenChangelog: 0, // id de la dernière note de version vue (pop-up « nouveautés »)
+  showPlatform: {},  // showKey -> code de la plateforme où l'on regarde la série ('p:8', 'cinema', 'tv', 'dvd', 't:Texte libre')
+  epPlatform: {},    // epKey -> code de plateforme propre à un épisode (sinon celle de la série)
+  moviePlatform: {}, // movieName -> code de plateforme où l'on a vu le film
+  platformNames: {}, // id TMDB -> nom de la plateforme choisie (affiché même si elle sort de COMMON_PROVIDERS)
   amoled: true, // fond totalement noir (écrans AMOLED) — activé par défaut
 };
 // tmdbCache = metadata cache (persisted to tmdb-cache.json)
@@ -154,20 +158,69 @@ function keyFromRecord(r) {
   const sk = r.showId || ('n:' + r.showName);
   return epKey(sk, r.season, r.number);
 }
-function toast(msg) {
+let _pfOffer = null; // « 📺 Où ? » en attente (voir queuePlatformOffer)
+function toastEl() {
   let t = document.querySelector('.toast');
   if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
-  t.textContent = msg; requestAnimationFrame(() => t.classList.add('show'));
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1800);
+  return t;
+}
+// « Vu » suivi d'une question asynchrone (ex. fiche épisode : « Marquer les épisodes précédents ? » après lecture TMDB) :
+// compteur levé avant l'await et baissé après (try/finally) ; tant qu'il est levé, « 📺 Où ? » attend.
+let _seenFlowPending = 0;
+const pfModalOpen = () => { const mr = document.getElementById('modalRoot'); return !!(mr && mr.children.length); };
+const pfCanShow = () => _seenFlowPending <= 0 && !pfModalOpen(); // jamais de « Où ? » par-dessus une fenêtre
+// Affiche le message (au prochain rafraîchissement) sauf s'il a été remplacé ou retiré entre-temps (_seq).
+function toastShow(t, ms) {
+  const seq = t._seq = (t._seq || 0) + 1;
+  requestAnimationFrame(() => { if (t._seq === seq) t.classList.add('show'); });
+  clearTimeout(t._h); t._h = setTimeout(() => { t._pf = null; t.classList.remove('show'); }, ms);
+}
+function toast(msg) {
+  if (_pfOffer && pfCanShow()) { toastActions(msg, []); return; } // un « 📺 Où ? » attend : il s'ajoute à ce message
+  const t = toastEl();
+  t.classList.remove('toast-multi');
+  t._pf = null;
+  t.textContent = msg;
+  toastShow(t, 1800);
 }
 // Message avec un bouton « Annuler » (ex. après un « +1 visionnage » fait par erreur).
-function toastUndo(msg, undo) {
-  let t = document.querySelector('.toast');
-  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
-  t.innerHTML = `<span>${esc(msg)}</span><button type="button" class="toast-undo">Annuler</button>`;
-  t.querySelector('.toast-undo').onclick = () => { clearTimeout(t._h); t.classList.remove('show'); undo(); };
-  requestAnimationFrame(() => t.classList.add('show'));
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 4500);
+function toastUndo(msg, undo) { toastActions(msg, [{ label: 'Annuler', run: undo }]); }
+// Message avec des boutons : actions = [{ label, run }]. Un « 📺 Où ? » en attente (_pfOffer) est ajouté à la fin,
+// et le message reste alors un peu plus longtemps. Les boutons ont la classe toast-undo (seuls cliquables, voir styles.css).
+function toastActions(msg, actions, ms) {
+  const acts = (actions || []).slice();
+  if (_pfOffer && pfCanShow()) { acts.push(_pfOffer); _pfOffer = null; }
+  const t = toastEl();
+  t.innerHTML = `<span>${esc(msg)}</span>` + acts.map((a, i) => `<button type="button" class="toast-undo" data-ti="${i}">${esc(a.label)}</button>`).join('');
+  t.classList.toggle('toast-multi', acts.length > 1);
+  t._pf = acts.find(a => a.pf) || null; // offre affichée : showModal la remet en attente (suspendPlatformOffer)
+  t.querySelectorAll('[data-ti]').forEach(b => b.onclick = () => { clearTimeout(t._h); t._seq = (t._seq || 0) + 1; t._pf = null; t.classList.remove('show'); acts[+b.dataset.ti].run(); });
+  toastShow(t, ms || (t._pf ? 7000 : acts.length ? 4500 : 1800));
+}
+// « 📺 Où ? » proposé après un « vu » (film, ou épisode d'une série sans plateforme) : il s'ajoute au prochain
+// message du bas (souvent « Film marqué comme vu » ou « … vu · Annuler ») ; si aucun message ne suit, on en affiche un
+// (fallbackMsg) dès qu'aucune fenêtre n'est ouverte et qu'aucun « vu » n'attend sa question (_seenFlowPending).
+function queuePlatformOffer(run, fallbackMsg) {
+  const offer = { label: '📺 Où ?', run, pf: true, fallbackMsg };
+  _pfOffer = offer;
+  let tries = 0;
+  const later = () => {
+    if (_pfOffer !== offer) return; // déjà ajouté à un message (ou remplacé par une autre offre)
+    if (!pfCanShow()) { if (++tries < 60) setTimeout(later, 500); else _pfOffer = null; return; } // ~30 s puis abandon
+    toastActions(fallbackMsg, []);
+  };
+  setTimeout(later, 0);
+}
+// Appelé par showModal (18-interface.js) : une fenêtre s'ouvre alors que « 📺 Où ? » est dans le message du bas → on masque
+// ce message et l'offre repart en attente (réaffichée avec son message de repli une fois la fenêtre fermée).
+// La fenêtre ouverte PAR « Où ? » n'est pas concernée : le clic sur le bouton a déjà vidé t._pf.
+function suspendPlatformOffer() {
+  const t = document.querySelector('.toast');
+  if (!t || !t._pf) return;
+  const o = t._pf;
+  t._pf = null; t._seq = (t._seq || 0) + 1;
+  clearTimeout(t._h); t.classList.remove('show');
+  if (!_pfOffer) queuePlatformOffer(o.run, o.fallbackMsg);
 }
 // Appui long (ou clic droit) sur un élément. Le clic qui suit un appui long est ignoré.
 function onLongPress(el, fn) {

@@ -15,6 +15,12 @@ const MOVIE_DEFAULT_RUNTIME = 115; // durée moyenne d'un film (min) quand incon
 
 // Notes de version (les plus récentes en premier), affichées dans #/changelog.
 const CHANGELOG = [
+  { id: 76, date: '25 novembre 2026', title: 'Où avez-vous regardé ?', items: [
+    'Sur la fiche d’un film ou d’une série vue : « 📺 Vu sur… » pour noter la plateforme, avec son logo (Netflix, Prime Video…, cinéma, télé, DVD ou autre).',
+    'Un épisode vu ailleurs ? Changez sa plateforme depuis sa fiche : une petite étiquette l’indique dans la liste des épisodes.',
+    'Après « Vu », le message du bas propose « 📺 Où ? » (une fois par série) : on peut l’ignorer.',
+    'Statistiques : nouveau bloc « Par plateforme ». Vos amis voient aussi la plateforme sur votre profil.',
+  ] },
   { id: 75, date: '23 novembre 2026', title: 'Onglets Films et Explorer réparés', items: [
     'Après certaines actions (ex. « Arrêter le revisionnage »), les onglets Films et Explorer ne répondaient plus : c’est corrigé.',
   ] },
@@ -467,6 +473,9 @@ const ICONS = {
   mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="M4 7.5l8 6 8-6"/>',
   chat: '<path d="M4 5.5h16v10.5H10l-4.5 4v-4H4z"/>',
   user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  cinema: '<rect x="3" y="3.5" width="18" height="10" rx="1.5"/><path d="M4.5 20.5v-2.2a1.8 1.8 0 0 1 3.6 0v2.2M10.2 20.5v-2.2a1.8 1.8 0 0 1 3.6 0v2.2M15.9 20.5v-2.2a1.8 1.8 0 0 1 3.6 0v2.2"/>',
+  antenna: '<rect x="3" y="9" width="18" height="11.5" rx="2.5"/><path d="M8 3.5l4 5 4-5"/><path d="M17.5 13h.01M17.5 16.5h.01"/><rect x="5.8" y="11.8" width="8.5" height="6" rx="1"/>',
+  disc: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2"/><path d="M12 6.2a5.8 5.8 0 0 1 5.8 5.8"/>',
 };
 // icon('tv') → <svg class="ic …"> ; cls 'f' = rempli (cœur plein…).
 function icon(name, cls = '') {
@@ -479,7 +488,7 @@ const EMOJI_ICON = {
   '📌': 'pin', '＋': 'plus', '➕': 'plus', '➖': 'minus', '✓': 'check', '✅': 'checkcircle', '🕒': 'clock', '🕘': 'clock', '⏱': 'clock', '⏳': 'clock',
   '🕰': 'history', '📅': 'calendar', '🗓': 'calendar', '📃': 'list', '📊': 'chart', '🎨': 'palette', '⚙': 'gear', '🆕': 'sparkle', '📘': 'book',
   '📚': 'library', '↕': 'sort', '🎭': 'tag', '▶': 'play', '🗑': 'trash', '🔁': 'repeat', '✏': 'edit', '✍': 'edit', '⏹': 'stop', '⏸': 'pause',
-  '💌': 'mail', '📩': 'mail', '🏆': 'trophy', '🔥': 'flame', '💡': 'bulb', '🍿': 'ticket', '🌸': 'leaf', '🏅': 'medal', '💬': 'chat', '↩': 'undo', 'ℹ': 'info', '🔜': 'play',
+  '💌': 'mail', '📩': 'mail', '🏆': 'trophy', '🔥': 'flame', '💡': 'bulb', '🍿': 'ticket', '🌸': 'leaf', '🏅': 'medal', '💬': 'chat', '↩': 'undo', 'ℹ': 'info', '🔜': 'play', '📡': 'antenna', '💿': 'disc', '📀': 'disc',
 };
 // emojiIcon('📌') → svg ; un emoji inconnu est rendu tel quel.
 function emojiIcon(e, cls = '') {

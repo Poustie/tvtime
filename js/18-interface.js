@@ -2,6 +2,7 @@
 'use strict';
 //////////////////////// Modal ////////////////////////
 function showModal(html, onReady) {
+  if (typeof suspendPlatformOffer === 'function') suspendPlatformOffer(); // pas de « 📺 Où ? » par-dessus une fenêtre (02-etat.js)
   const root = document.getElementById('modalRoot');
   root.innerHTML = `<div class="backdrop"><div class="modal">${html}</div></div>`;
   root.querySelector('.backdrop').onclick = (e) => { if (e.target.classList.contains('backdrop')) closeModal(); };

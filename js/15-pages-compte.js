@@ -335,6 +335,8 @@ function computeStatsData() {
     D.movDays.push(day);
   }
   D.movDays.sort();
+  // Par plateforme (« Vu sur … ») : films vus + épisodes vus.
+  D.platforms = platformCounts(shows.values(), allMovies);
   // Revisionnages : total, par série, et datés (épisodes + films).
   D.rewatchTotal = 0; D.rewatchByShow = {};
   for (const [k, c] of MODEL.rewatchMap) {
@@ -493,7 +495,21 @@ function statsPlusHtml(D) {
     </details>
     <details class="panel stat-sec" open><summary><h3>${icon('trophy')} Records</h3></summary>
       ${statRecordsHtml(D)}
+    </details>
+    <details class="panel stat-sec" open><summary><h3>${icon('tv')} Par plateforme</h3></summary>
+      ${statPlatformHtml(D)}
     </details>`;
+}
+// Bloc « Par plateforme » : une barre par plateforme (épisodes + films), du plus grand au plus petit.
+function statPlatformHtml(D) {
+  const P = D.platforms || { list: [], noneEps: 0, noneMovies: 0 };
+  const n = (v, un, plus) => `${statFmtN(v)} ${plural(v, un, plus)}`;
+  const none = (P.noneEps || P.noneMovies) ? `<p class="hint stat-help">Non renseigné : ${n(P.noneEps, 'épisode', 'épisodes')} · ${n(P.noneMovies, 'film', 'films')}.</p>` : '';
+  if (!P.list.length) return `<p class="hint stat-help">Aucune plateforme notée pour l’instant : touchez « Où l’avez-vous vu ? » sur la fiche d’un film ou d’une série déjà vus.</p>${none}`;
+  const max = Math.max(1, ...P.list.map(r => r.eps + r.movies));
+  return `<p class="hint stat-help pf-legend"><i class="sb-key e"></i> épisodes <i class="sb-key m"></i> films · un épisode compte sa propre plateforme, sinon celle de sa série.</p>
+    ${P.list.map(r => `<div class="sb-row pf-row"><span class="sb-lbl pf-lbl" title="${esc(r.label)}">${pfBadgeHtml(r.code, 22)}<span>${esc(r.label)}</span></span><span class="sb-track"><i class="e" style="width:${r.eps / max * 100}%"></i><i class="m" style="width:${r.movies / max * 100}%"></i></span><span class="sb-val">${n(r.eps, 'épisode', 'épisodes')} · ${n(r.movies, 'film', 'films')}</span></div>`).join('')}
+    ${none}`;
 }
 function wireStatsPlus(el, D) {
   el.querySelectorAll('#statBilan .yr-chips .chip').forEach(c => c.onclick = () => {

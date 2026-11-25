@@ -8,11 +8,13 @@ function movieStatus(m) {
 }
 function setMovieStatus(name, status) {
   if (!userState.movieStatus) userState.movieStatus = {};
+  const was = userState.movieStatus[name];
   userState.movieStatus[name] = status;
   if (!userState.movieWatchedAt) userState.movieWatchedAt = {};
   if (status === 'watched') {
     if (!userState.movieWatchedAt[name]) userState.movieWatchedAt[name] = new Date().toISOString().slice(0, 19).replace('T', ' ');
     if (userState.movieProgress) delete userState.movieProgress[name]; // film terminé -> plus de reprise
+    if (was !== 'watched' && typeof offerMoviePlatform === 'function') offerMoviePlatform(name); // « 📺 Où ? » dans le message du bas
   } else {
     delete userState.movieWatchedAt[name];
   }
@@ -142,6 +144,7 @@ route('movie', async (el, rest) => {
         <button class="btn ${isFavMovie(m) ? 'on' : ''}" id="mFav">${isFavMovie(m) ? icon('heart', 'f') + ' Dans mes favoris' : icon('heart') + ' Ajouter aux favoris'}</button>
         <button class="btn" id="mMore" aria-label="Plus d’actions">${icon('more')} Plus</button>
       </div>
+      ${st === 'watched' ? `<div id="pfSlot" class="pf-slot">${pfLineHtml(moviePlatformOf(m.name))}</div>` : ''}
       ${recoByHtml(m.name)}
       ${avisCardHtml({ cls: 'movie-react', score: movieScore(m), locked: st !== 'watched', vote: meta && meta.vote })}
       ${st !== 'watched' && meta && meta.id ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
@@ -175,6 +178,10 @@ route('movie', async (el, rest) => {
   if (mTog) mTog.onclick = () => { setMovieStatus(m.name, 'watched'); toast('Film marqué comme vu'); render(); };
   el.querySelector('#mFav').onclick = () => { toggleFavMovie(m); toast(isFavMovie(m) ? 'Ajouté aux favoris' : 'Retiré des favoris'); render(); };
   wireRecoBy(el, m.name);
+  const pfSlot = el.querySelector('#pfSlot');
+  if (pfSlot) pfSlot.onclick = (ev) => {
+    if (ev.target.closest('[data-pf]')) openMoviePlatformSheet(m.name, () => { if (pfSlot.isConnected) pfSlot.innerHTML = pfLineHtml(moviePlatformOf(m.name)); });
+  };
   el.querySelector('#mMore').onclick = () => openActionSheet(movieDisplayName(m), movieActionItems(m, true).concat(recoActionItems('movie', (meta && meta.id) || (mRec && mRec.id), (meta && meta.title) || movieDisplayName(m), meta && meta.poster)));
   const rwBtn = el.querySelector('#mRw');
   if (rwBtn) rwBtn.onclick = () => {

@@ -36,6 +36,7 @@ route('show', async (el, rest) => {
         <button class="btn" id="btnMore" aria-label="Plus d’actions">${icon('more')} Plus</button>
       </div>
       ${recoByHtml(sh.key)}
+      <div id="pfSlot" class="pf-slot" data-show="${esc(sh.key)}">${sh.seenKeys.size ? pfLineHtml(showPlatformOf(sh.key)) : ''}</div>
       <div id="nextEpLine"></div>
       ${avisCardHtml({ cls: 'show-react', score: showScore(sh), locked: !sh.seenKeys.size, vote: meta && meta.vote })}
       ${sh.seenKeys.size === 0 && tmdbId ? '<div class="appr-slot" id="apprSlot"></div>' : ''}
@@ -60,6 +61,8 @@ route('show', async (el, rest) => {
   const bResume = el.querySelector('#btnResume');
   if (bResume) bResume.onclick = () => { toggleArchived(sh); toast('Série reprise'); render(); };
   wireRecoBy(el, sh.key);
+  const pfSlot = el.querySelector('#pfSlot');
+  if (pfSlot) pfSlot.onclick = (ev) => { if (ev.target.closest('[data-pf]')) openShowPlatformSheet(sh); };
   el.querySelector('#btnMore').onclick = () => openActionSheet(displayName(sh), showActionItems(sh, { meta, tmdbId, page: true }).concat(recoActionItems('tv', tmdbId, (meta && meta.name) || displayName(sh), meta && meta.poster)));
 
   renderAppreciation(el.querySelector('#apprSlot'), 'tv', tmdbId, meta);
@@ -122,6 +125,7 @@ function refreshShowHeader(sh) {
   // Carte « Votre avis » : déverrouillée dès le 1er épisode coché sur la fiche (sinon smiley grisé), reverrouillée à 0.
   const av = document.querySelector('#app .show-react');
   if (av) { const locked = !sh.seenKeys.size; if (av.classList.contains('is-locked') !== locked) setReactLocked(av, locked, showScore(sh)); }
+  paintShowPf(sh); // ligne « Vu sur … » : apparaît au 1er épisode vu, disparaît à 0
 }
 let _nextLineModalFn = null;
 // Ligne « Prochain épisode » sous l'en-tête de la fiche série (même calcul que « Prochains épisodes » : nextEpisodeInfo).
@@ -238,6 +242,7 @@ route('episode', async (el, rest) => {
         ${rw > 0 ? '<button class="btn" id="epRwMinus" title="Retirer un visionnage">−1</button>' : ''}
         ${seen ? '<button class="btn" id="epRwFix" title="Corriger le nombre de visionnages">' + icon('edit') + ' Corriger</button>' : ''}
       </div>
+      <div id="epPfSlot" class="pf-slot">${seen ? pfLineHtml(epOwnPlatformOf(k), showPlatformOf(sh.key)) : ''}</div>
       <div class="ep-react">
         <span class="react-label">Ma réaction</span>
         ${reactPickerHtml(epScore(k), true, !seen)}
@@ -249,24 +254,32 @@ route('episode', async (el, rest) => {
 
   const reviews = wireReviews(el, { lk: k, work: reviewWorkEp(tmdbId, season, n), seen, stars: () => epScore(k), what: 'l’épisode' });
   el.querySelectorAll('[data-epnav]').forEach(b => b.onclick = () => swipeTo(b.dataset.epnav));
+  // Ligne « Vu sur … » de l'épisode (sa plateforme, sinon celle de la série) : seulement s'il est vu.
+  const epPf = el.querySelector('#epPfSlot');
+  const paintEpPf = () => { if (epPf) epPf.innerHTML = sh.seenKeys.has(k) ? pfLineHtml(epOwnPlatformOf(k), showPlatformOf(sh.key)) : ''; };
+  if (epPf) epPf.onclick = (ev) => { if (ev.target.closest('[data-pf]')) openEpPlatformSheet(sh, season, n, paintEpPf); };
   el.querySelector('#epSeen').onclick = async () => {
     const wasComplete = isShowComplete(sh);
-    toggleSeen(sh, season, n);
-    const now = sh.seenKeys.has(k);
-    const b = el.querySelector('#epSeen');
-    b.classList.toggle('primary', now); b.textContent = now ? '✓ Vu' : '✓ Je l’ai vu';
-    const rwb = el.querySelector('#epRw'); if (rwb) rwb.disabled = !now;
-    reviews.setSeen(now);
-    if (now) revealSpoil(); // épisode vu : plus rien à cacher
-    setReactLocked(el.querySelector('.ep-react'), !now, epScore(k));
-    updateSyncStatus();
-    if (now) {
-      // Comme dans la liste : proposer de marquer aussi les épisodes précédents non vus.
-      const prev = await prevUnseenOf(sh, tmdbId, season, n);
-      if (!sh.seenKeys.has(k)) return; // décoché entre-temps (double appui) : rien à proposer
-      if (prev.length) { offerMarkPrevious(sh, prev, season, n); return; }
-    }
-    if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
+    _seenFlowPending++; // « 📺 Où ? » attend la fin de ce flux (question « épisodes précédents » après lecture TMDB)
+    try {
+      toggleSeen(sh, season, n);
+      const now = sh.seenKeys.has(k);
+      const b = el.querySelector('#epSeen');
+      b.classList.toggle('primary', now); b.textContent = now ? '✓ Vu' : '✓ Je l’ai vu';
+      const rwb = el.querySelector('#epRw'); if (rwb) rwb.disabled = !now;
+      reviews.setSeen(now);
+      if (now) revealSpoil(); // épisode vu : plus rien à cacher
+      setReactLocked(el.querySelector('.ep-react'), !now, epScore(k));
+      paintEpPf();
+      updateSyncStatus();
+      if (now) {
+        // Comme dans la liste : proposer de marquer aussi les épisodes précédents non vus.
+        const prev = await prevUnseenOf(sh, tmdbId, season, n);
+        if (!sh.seenKeys.has(k)) return; // décoché entre-temps (double appui) : rien à proposer
+        if (prev.length) { offerMarkPrevious(sh, prev, season, n); return; }
+      }
+      if (now && !wasComplete && isShowComplete(sh)) celebrateCompletion(sh);
+    } finally { _seenFlowPending--; } // la fenêtre éventuelle est déjà ouverte : « Où ? » attendra sa fermeture
   };
   const seenNow = () => sh.seenKeys.has(k);
   const revealSpoil = () => { el.querySelectorAll('.spoil').forEach(x => x.classList.remove('spoil')); el.querySelector('.spoil-hint')?.remove(); };
@@ -570,7 +583,7 @@ function epHtml(sh, season, e, pass) {
   return `<div class="ep ${seen ? 'seen' : ''} ${cur ? 'cur' : ''} ${e.custom ? 'custom' : ''}" data-n="${e.n}">
     <div class="check ${seen ? 'on' : ''}" data-act="seen" role="button" aria-label="Marquer comme vu">✓</div>
     <div class="num">${epTag(sh, season, e.n)}</div>
-    <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + epDisp(sh, season, e.n).n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
+    <div class="epname" data-act="open"><span class="${antiSpoiler() && !seen && e.name ? 'spoil-name' : ''}">${esc(e.name || 'Épisode ' + epDisp(sh, season, e.n).n)}</span>${e.custom ? ' <span class="tag-custom">ajouté</span>' : ''}${epPfTagHtml(sh, k)}<small>${e.air ? esc(e.air) : ''}${!aired && e.air ? ' · à venir' : ''}</small></div>
     <div class="rw ${rw > 0 ? 'on' : ''}" data-act="rw" role="button" aria-label="Je l’ai revu" title="Je l’ai revu — appui long : corriger">🔁<span class="rw-n">${rw > 0 ? '×' + (rw + 1) : ''}</span></div>
     ${epReactBtnHtml(epScore(k))}
     ${e.custom ? `<button class="ep-del" data-act="delcustom" title="Supprimer cet épisode ajouté">${icon('trash')}</button>` : ''}
@@ -902,3 +915,277 @@ function openProviderPicker() {
   });
 }
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-pickprov]')) openProviderPicker(); });
+
+//////////////////////// Plateforme de visionnage : « Vu sur … » (films, séries, épisodes) ////////////////////////
+// Codes courts et stables : 'p:<id TMDB>' (nom gardé dans userState.platformNames), 'cinema', 'tv', 'dvd', 't:<texte libre>'.
+// userState.showPlatform (showKey), epPlatform (epKey, l'emporte sur la série), moviePlatform (movieName).
+// [code, icône dessinée (ICONS), libellé]
+const PF_FIXED = [['cinema', 'cinema', 'Cinéma'], ['tv', 'antenna', 'Télévision'], ['dvd', 'disc', 'DVD / Blu-ray']];
+function pfProviderName(id) {
+  id = Number(id);
+  const saved = (userState.platformNames || {})[id];
+  if (saved) return saved;
+  const c = COMMON_PROVIDERS.find(p => p[0] === id);
+  if (c) return c[1];
+  return (prefs().myProviderNames || {})[id] || (tmdbCache.providerNames || {})[id] || ('Plateforme ' + id);
+}
+// Logos des plateformes (chemins TMDB) : tmdbCache.providerLogos (liste TMDB FR, voir loadProviderLogos), sinon ceux
+// des fiches « Où regarder » du cache (collecte paresseuse, mémorisée une minute ou jusqu'au remplacement de tmdbCache).
+let _pfScan = null; // { src, at, logos: Map(id -> logo), names: Map(nom normalisé -> id) }
+const pfNorm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\+/g, 'plus').replace(/[^a-z0-9]/g, '');
+function pfScanCache() {
+  if (_pfScan && _pfScan.src === tmdbCache && Date.now() - _pfScan.at < 60000) return _pfScan;
+  const logos = new Map(), names = new Map();
+  const scan = (c) => {
+    for (const k of Object.keys(c || {})) {
+      const pv = c[k] && c[k].providers; if (!pv) continue;
+      for (const g of ['flatrate', 'rent', 'buy']) for (const x of (pv[g] || [])) {
+        if (!x || x.id == null) continue;
+        const id = Number(x.id), n = pfNorm(x.name);
+        if (x.logo && !logos.has(id)) logos.set(id, x.logo);
+        if (n && !names.has(n)) names.set(n, id);
+      }
+    }
+  };
+  scan(tmdbCache.shows); scan(tmdbCache.movieMeta);
+  return (_pfScan = { src: tmdbCache, at: Date.now(), logos, names });
+}
+function pfProviderLogo(id) {
+  id = Number(id);
+  const L = tmdbCache.providerLogos;
+  if (L && L[id]) return L[id];
+  return pfScanCache().logos.get(id) || null;
+}
+// Liste des plateformes TMDB (FR) : au plus une fois tous les 30 jours, une seule requête à la fois, silencieuse
+// (pas de clé, hors-ligne : on garde les pastilles). Résout true si de nouveaux logos sont arrivés.
+let _pfLogoReq = null, _pfLogoFailAt = 0;
+function loadProviderLogos() {
+  if (tmdbCache.providerLogos && Date.now() - (tmdbCache.providerLogosAt || 0) < 30 * 86400000) return Promise.resolve(false);
+  if (_pfLogoReq) return _pfLogoReq;
+  if (!hasKey() || Date.now() - _pfLogoFailAt < 10 * 60000) return Promise.resolve(false);
+  _pfLogoReq = (async () => {
+    try {
+      const res = await Promise.all(['movie', 'tv'].map(t => tmdbFetch(`/watch/providers/${t}?watch_region=FR`)));
+      const logos = {}, names = {};
+      for (const r of res) for (const x of ((r && r.results) || [])) {
+        if (!x || x.provider_id == null) continue;
+        if (x.logo_path) logos[x.provider_id] = x.logo_path;
+        if (x.provider_name) names[x.provider_id] = x.provider_name;
+      }
+      if (!Object.keys(logos).length) { _pfLogoFailAt = Date.now(); return false; }
+      tmdbCache.providerLogos = logos; tmdbCache.providerNames = names; tmdbCache.providerLogosAt = Date.now();
+      scheduleSaveCache();
+      return true;
+    } catch { _pfLogoFailAt = Date.now(); return false; }
+    finally { _pfLogoReq = null; }
+  })();
+  return _pfLogoReq;
+}
+// Retrouve un code à partir d'un nom (« Netflix », « Disney+ », « Cinéma »…) ; '' si inconnu.
+function pfCodeFromName(name) {
+  const n = pfNorm(name); if (!n) return '';
+  const f = PF_FIXED.find(x => pfNorm(x[2]) === n || x[0] === n); if (f) return f[0];
+  const c = COMMON_PROVIDERS.find(p => pfNorm(p[1]) === n); if (c) return 'p:' + c[0];
+  for (const src of [userState.platformNames, prefs().myProviderNames, tmdbCache.providerNames])
+    for (const id of Object.keys(src || {})) if (pfNorm(src[id]) === n) return 'p:' + id;
+  const id = pfScanCache().names.get(n);
+  return id != null ? 'p:' + id : '';
+}
+// Couleur de repli : couleur de marque connue, sinon teinte stable dérivée du nom.
+const PF_COLORS = { 8: '#E50914', 119: '#00A8E1', 337: '#113CCF', 381: '#000', 350: '#000', 1899: '#002BE7', 531: '#0064FF',
+  283: '#F47521', 415: '#0096FF', 56: '#FF6600', 236: '#1E2A78', 234: '#FA481C' };
+function pfColor(name, id) {
+  if (id != null && PF_COLORS[id]) return PF_COLORS[id];
+  let h = 0; for (const ch of (pfNorm(name) || '?')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return `hsl(${h % 360}, 55%, 40%)`;
+}
+function pfInitials(name) {
+  const w = String(name || '').trim().split(/[\s\-_/.]+/).filter(Boolean);
+  if (!w.length) return '?';
+  const first = (s) => Array.from(s)[0] || '';
+  return (w.length > 1 ? first(w[0]) + first(w[1]) : first(w[0]) + (/\+$/.test(w[0]) && w[0].length > 1 ? '+' : '')).toUpperCase();
+}
+const pfBox = (size) => `width:${size}px;height:${size}px;border-radius:${Math.round(size * .25)}px`;
+function pfInitBadge(name, size, id) {
+  return `<span class="pf-badge pf-init" style="${pfBox(size)};background:${pfColor(name, id)};font-size:calc(${(size * .42).toFixed(1)}px * var(--fs, 1))"${id != null ? ` data-pfid="${Number(id)}" data-pfsz="${size}"` : ''} aria-hidden="true">${esc(pfInitials(name))}</span>`;
+}
+const pfIconBadge = (name, size) => `<span class="pf-badge pf-ic" style="width:${size}px;height:${size}px" aria-hidden="true">${icon(name)}</span>`;
+// Pastille d'une plateforme : vrai logo pour 'p:<id>' (sinon initiales sur fond coloré), icône dessinée pour
+// Cinéma / Télévision / DVD, logo ou icône 📺 pour le texte libre (« Netflix » tapé à la main garde son logo).
+function pfBadgeHtml(code, size = 20) {
+  if (!code || typeof code !== 'string') return '';
+  if (code.startsWith('p:')) {
+    const id = Number(code.slice(2)), logo = pfProviderLogo(id);
+    if (logo) return `<img class="pf-logo" src="${esc(IMG(logo, 'w92'))}" width="${size}" height="${size}" style="${pfBox(size)}" loading="lazy" alt="" data-pfid="${id}" data-pfsz="${size}">`;
+    return pfInitBadge(pfProviderName(id), size, id);
+  }
+  if (code.startsWith('t:')) {
+    const c = pfCodeFromName(code.slice(2));
+    return c ? pfBadgeHtml(c, size) : pfIconBadge('tv', size);
+  }
+  const f = PF_FIXED.find(x => x[0] === code);
+  return pfIconBadge(f ? f[1] : 'tv', size);
+}
+// Même pastille à partir d'un simple nom (profil d'un ami : seul le libellé est publié).
+function pfNameBadgeHtml(name, size = 16) {
+  if (!name) return '';
+  const c = pfCodeFromName(name);
+  return c ? pfBadgeHtml(c, size) : pfInitBadge(name, size);
+}
+// Logos arrivés après l'affichage : remplace les pastilles d'initiales de root par les images.
+function pfRefreshLogos(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('.pf-init[data-pfid]').forEach(el => {
+    if (pfProviderLogo(el.dataset.pfid)) el.outerHTML = pfBadgeHtml('p:' + el.dataset.pfid, +el.dataset.pfsz || 20);
+  });
+}
+// Libellé affichable d'un code ('' si vide).
+function pfLabel(code) {
+  if (!code || typeof code !== 'string') return '';
+  if (code.startsWith('p:')) return pfProviderName(code.slice(2));
+  if (code.startsWith('t:')) return code.slice(2);
+  const f = PF_FIXED.find(x => x[0] === code);
+  return f ? f[2] : code;
+}
+const pfSame = (a, b) => !!a && !!b && pfLabel(a).toLowerCase() === pfLabel(b).toLowerCase();
+const showPlatformOf = (skey) => (userState.showPlatform || {})[skey] || '';
+const epOwnPlatformOf = (k) => (userState.epPlatform || {})[k] || '';
+const moviePlatformOf = (name) => (userState.moviePlatform || {})[name] || '';
+// Enregistre (ou efface si code vide) dans userState[mapName] (créé s'il manque : ancienne sauvegarde).
+function setPlatformCode(mapName, key, code) {
+  if (!userState[mapName] || typeof userState[mapName] !== 'object') userState[mapName] = {};
+  if (code) userState[mapName][key] = code; else delete userState[mapName][key];
+  scheduleSaveState();
+}
+// Liste de choix (fenêtre du bas, même style que « ⋯ Plus ») : mes plateformes, les autres, Cinéma / Télévision / DVD,
+// « Autre… » (texte libre) et « Effacer ». onPick(code) ; code '' = effacer. opts = { hint, clearLabel }.
+function openPlatformSheet(title, cur, onPick, opts = {}) {
+  const mineIds = myProviderIds(), names = prefs().myProviderNames || {};
+  const items = [];
+  const prov = (id, nm) => items.push({ code: 'p:' + id, label: nm, id });
+  const curId = cur && cur.startsWith('p:') ? Number(cur.slice(2)) : null;
+  if (mineIds.length) { items.push({ sec: 'Mes plateformes' }); mineIds.forEach(i => prov(i, names[i] || pfProviderName(i))); }
+  const others = COMMON_PROVIDERS.filter(([i]) => !mineIds.includes(i));
+  if (curId != null && !mineIds.includes(curId) && !others.some(([i]) => i === curId)) others.unshift([curId, pfLabel(cur)]); // plateforme choisie hors de la liste
+  if (others.length) { items.push({ sec: mineIds.length ? 'Autres plateformes' : 'Plateformes' }); others.forEach(([i, n]) => prov(i, n)); }
+  items.push({ sec: 'Ailleurs' });
+  PF_FIXED.forEach(([c, , l]) => items.push({ code: c, label: l }));
+  const isText = !!(cur && cur.startsWith('t:'));
+  items.push({ code: 't:', ico: 'edit', label: isText ? 'Autre : ' + cur.slice(2) : 'Autre…', text: true });
+  if (cur) items.push({ code: '', ico: 'trash', label: opts.clearLabel || 'Effacer', danger: true });
+  const itemHtml = (it, i) => {
+    if (it.sec) return `<div class="sheet-sec">${esc(it.sec)}</div>`;
+    const on = it.text ? isText : (!!it.code && it.code === cur);
+    return `<button type="button" class="sheet-item${on ? ' on' : ''}${it.danger ? ' danger' : ''}" data-i="${i}"${it.danger ? '' : ` role="radio" aria-checked="${on}"`}>
+      <span class="si-ico">${it.ico ? pfIconBadge(it.ico, 28) : pfBadgeHtml(it.code, 28)}</span><span class="si-txt">${esc(it.label)}</span>${on ? `<span class="si-check">${icon('check')}</span>` : ''}</button>`;
+  };
+  showModal(`<h2>${icon('tv')} ${esc(title)}</h2>${opts.hint ? `<p class="hint">${esc(opts.hint)}</p>` : ''}
+    <div class="sheet-list pf-sheet" role="radiogroup">${items.map(itemHtml).join('')}</div>
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`,
+    (root) => {
+      sheetStyle(root);
+      // Logos téléchargés pendant que la liste est ouverte : mis à jour sur place.
+      loadProviderLogos().then(ok => { if (ok) pfRefreshLogos(document); });
+      root.querySelectorAll('.sheet-item').forEach(b => b.onclick = () => {
+        const it = items[+b.dataset.i];
+        if (it.text) { openPlatformText(title, isText ? cur.slice(2) : '', onPick); return; }
+        if (it.id != null) { if (!userState.platformNames || typeof userState.platformNames !== 'object') userState.platformNames = {}; userState.platformNames[it.id] = it.label; }
+        closeModal(); onPick(it.code);
+      });
+    });
+}
+// « Autre… » : petite saisie libre (40 caractères).
+function openPlatformText(title, val, onPick) {
+  showModal(`<h2>${icon('edit')} Autre plateforme</h2>
+    <p class="hint">${esc(title)}</p>
+    <input class="input" id="pfText" maxlength="40" placeholder="Ex. : Molotov, chez des amis…" autocomplete="off" value="${esc(val)}">
+    <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="pfTextOk">Enregistrer</button></div>`,
+    (root) => {
+      const input = root.querySelector('#pfText');
+      const done = () => { const v = input.value.replace(/\s+/g, ' ').trim().slice(0, 40); closeModal(); if (v) onPick('t:' + v); };
+      root.querySelector('#pfTextOk').onclick = done;
+      input.onkeydown = (e) => { if (e.key === 'Enter') done(); };
+      setTimeout(() => { try { input.focus(); } catch {} }, 60);
+    });
+}
+// Ligne « 📺 Vu sur Netflix ✎ » des fiches ; code vide = « Où l'avez-vous vu ? » en grisé ; inherited = plateforme de la série
+// (fiche épisode sans plateforme propre).
+function pfLineHtml(code, inherited) {
+  const c = code || inherited;
+  if (!c) return `<button type="button" class="pf-line" data-pf>${icon('tv')} Où l’avez-vous vu ?</button>`;
+  return `<button type="button" class="pf-line set" data-pf>${pfBadgeHtml(c, 20)} <span>Vu sur <b>${esc(pfLabel(c))}</b>${code ? '' : ' <span class="pf-inh">(comme la série)</span>'}</span> <span class="pf-edit" aria-hidden="true">✎</span></button>`;
+}
+// Petit rappel dans la liste des épisodes : épisode dont la plateforme propre diffère de celle de la série (masqué si non vu, CSS).
+function epPfTagHtml(sh, k) {
+  const own = epOwnPlatformOf(k);
+  if (!own || pfSame(own, showPlatformOf(sh.key))) return '';
+  return ` <span class="pf-tag" title="Vu sur ${esc(pfLabel(own))}">${pfBadgeHtml(own, 14)}<span>${esc(pfLabel(own))}</span></span>`;
+}
+// Fiche série : la ligne n'a de sens qu'avec au moins un épisode vu (repeinte par refreshShowHeader).
+function paintShowPf(sh) {
+  const slot = document.querySelector('#app #pfSlot');
+  if (!slot || slot.dataset.show !== sh.key) return;
+  const want = sh.seenKeys.size ? pfLineHtml(showPlatformOf(sh.key)) : '';
+  if (slot.innerHTML !== want) slot.innerHTML = want;
+}
+function openShowPlatformSheet(sh, after) {
+  const name = displayName(sh);
+  openPlatformSheet(name, showPlatformOf(sh.key), (code) => {
+    setPlatformCode('showPlatform', sh.key, code);
+    toast(code ? `📺 ${name} : ${pfLabel(code)}` : 'Plateforme effacée');
+    (after || render)();
+  }, { hint: 'Sur quelle plateforme regardez-vous cette série ? (vaut pour tous les épisodes)' });
+}
+function openEpPlatformSheet(sh, season, n, after) {
+  const k = epKey(sh.key, season, n), inh = showPlatformOf(sh.key);
+  openPlatformSheet(`${displayName(sh)} · ${epTag(sh, season, n)}`, epOwnPlatformOf(k), (code) => {
+    if (pfSame(code, inh)) code = ''; // même plateforme que la série : rien de propre à l'épisode
+    setPlatformCode('epPlatform', k, code);
+    (after || render)();
+  }, { hint: 'Pour cet épisode seulement' + (inh ? ` (la série : ${pfLabel(inh)})` : ''), clearLabel: inh ? `Effacer (revenir à ${pfLabel(inh)}, comme la série)` : 'Effacer' });
+}
+function openMoviePlatformSheet(name, after) {
+  const m = (DATA.movies || []).concat(userState.customMovies || []).find(x => x.name === name);
+  const title = m ? movieDisplayName(m) : name;
+  openPlatformSheet(title, moviePlatformOf(name), (code) => {
+    setPlatformCode('moviePlatform', name, code);
+    toast(code ? `📺 ${title} : ${pfLabel(code)}` : 'Plateforme effacée');
+    (after || render)();
+  }, { hint: 'Où avez-vous vu ce film ?' });
+}
+// Après un « vu » : « 📺 Où ? » dans le message du bas (voir queuePlatformOffer, 02-etat.js).
+// Série (commencée ou non) : seulement sans plateforme, au plus une fois par série et par session.
+const _pfOffered = new Set();
+function offerShowPlatform(sh, season, n) {
+  if (!sh || showPlatformOf(sh.key) || _pfOffered.has(sh.key)) return;
+  _pfOffered.add(sh.key);
+  queuePlatformOffer(() => openShowPlatformSheet(sh), `✓ ${displayName(sh)} · ${epTag(sh, season, n)} vu`);
+}
+function offerMoviePlatform(name) {
+  if (moviePlatformOf(name)) return;
+  queuePlatformOffer(() => openMoviePlatformSheet(name), '✓ Film marqué comme vu');
+}
+// Statistiques « Par plateforme » : films vus et épisodes vus (plateforme de l'épisode, sinon celle de sa série),
+// regroupés par libellé (« Netflix » choisi dans la liste ou tapé à la main = une seule ligne), du plus grand au plus petit.
+// shows = itérable de séries ({ key, seenKeys }), movies = tous les films (seuls les vus comptent).
+function platformCounts(shows, movies) {
+  const rows = new Map();
+  let noneEps = 0, noneMovies = 0;
+  const sp = userState.showPlatform || {}, ep = userState.epPlatform || {}, mp = userState.moviePlatform || {};
+  const add = (code, f) => {
+    if (typeof code !== 'string') return;
+    const l = pfLabel(code), k = l.toLowerCase();
+    const r = rows.get(k) || { label: l, code, eps: 0, movies: 0 };
+    if (!r.code.startsWith('p:') && code.startsWith('p:')) r.code = code; // pour le logo : le code TMDB l'emporte
+    r[f]++; rows.set(k, r);
+  };
+  for (const sh of shows) for (const k of sh.seenKeys) { const c = ep[k] || sp[sh.key]; if (c) add(c, 'eps'); else noneEps++; }
+  const seenNames = new Set();
+  for (const m of movies || []) {
+    if (!m || seenNames.has(m.name) || movieStatus(m) !== 'watched') continue;
+    seenNames.add(m.name);
+    const c = mp[m.name]; if (c) add(c, 'movies'); else noneMovies++;
+  }
+  const list = [...rows.values()].sort((a, b) => (b.eps + b.movies) - (a.eps + a.movies) || a.label.localeCompare(b.label));
+  return { list, noneEps, noneMovies };
+}

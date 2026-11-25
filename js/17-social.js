@@ -46,8 +46,9 @@ function buildShareSnapshot() {
       .slice(0, 30)
       .map(s => {
         const pass = isRewatching(s) && rewatchPass(s); // revisionnage : progression du nouveau passage
-        return pass ? { n: displayName(s), p: posterOf(s), id: showIdOf(s), d: pass.done, t: pass.total, r: 1 }
-          : { n: displayName(s), p: posterOf(s), id: showIdOf(s), d: s.seenKeys.size, t: airedTotal(metaFor(s)) || 0 };
+        const pf = pfLabel(showPlatformOf(s.key)) || undefined; // plateforme (libellé), absente si inconnue
+        return pass ? { n: displayName(s), p: posterOf(s), id: showIdOf(s), d: pass.done, t: pass.total, r: 1, pf }
+          : { n: displayName(s), p: posterOf(s), id: showIdOf(s), d: s.seenKeys.size, t: airedTotal(metaFor(s)) || 0, pf };
       });
   }
   if (shareOpt('recent')) {
@@ -62,7 +63,7 @@ function buildShareSnapshot() {
       const [sk, s, e] = kk.split('|');
       ev.push({ k: 'e', at: v.at, sk, s, e });
     }
-    for (const m of movies) if (movieStatus(m) === 'watched') { const at = movieWatchedOf(m); if (at) ev.push({ k: 'm', at, n: movieDisplayName(m) }); }
+    for (const m of movies) if (movieStatus(m) === 'watched') { const at = movieWatchedOf(m); if (at) ev.push({ k: 'm', at, n: movieDisplayName(m), pf: pfLabel(moviePlatformOf(m.name)) }); }
     ev.sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const groups = [];
     for (const x of ev) {
@@ -71,10 +72,11 @@ function buildShareSnapshot() {
         const sh = MODEL.shows.get(x.sk); if (!sh) continue;
         const last = groups[groups.length - 1];
         if (last && last.k === 'e' && last.sk === x.sk) { last.c++; continue; }
-        groups.push({ k: 'e', sk: x.sk, n: displayName(sh), e: epTag(sh, x.s, x.e), c: 1, at: x.at });
-      } else groups.push({ k: 'm', n: x.n, c: 1, at: x.at });
+        // Plateforme du dernier épisode du groupe : la sienne, sinon celle de la série
+        groups.push({ k: 'e', sk: x.sk, n: displayName(sh), e: epTag(sh, x.s, x.e), c: 1, at: x.at, pf: pfLabel(epOwnPlatformOf(epKey(x.sk, x.s, x.e)) || showPlatformOf(x.sk)) });
+      } else groups.push({ k: 'm', n: x.n, c: 1, at: x.at, pf: x.pf });
     }
-    snap.recent = groups.map(g => ({ k: g.k, n: g.n, e: g.e, c: g.c, at: g.at }));
+    snap.recent = groups.map(g => ({ k: g.k, n: g.n, e: g.e, c: g.c, at: g.at, pf: g.pf || undefined }));
   }
   if (shareOpt('favs')) {
     snap.favShows = shows.filter(s => isFavShow(s)).slice(0, 15).map(s => ({ n: displayName(s), p: posterOf(s), id: showIdOf(s) }));
@@ -572,9 +574,11 @@ route('friend', async (el, rest) => {
   catch (e) { el.innerHTML = `${back}<div class="empty"><p>Impossible de charger (${esc(e.message || 'hors-ligne')}).</p></div>`; return; }
   if (!p) { el.innerHTML = `${back}<div class="empty">Ce profil n'est plus visible.</div>`; return; }
   const s = p.snapshot || {};
+  // Plateforme publiée par l'ami (champ pf, absent des anciens résumés) : texte court, affiché discrètement.
+  const pfOf = (it) => (it && typeof it.pf === 'string' && it.pf.trim()) ? it.pf.trim().slice(0, 40) : '';
   const tile = (it, bar, kind) => {
     const po = safePoster(it.p);
-    return `<div class="fr-item" role="link" tabindex="0" data-kind="${kind}" data-id="${esc(it.id || '')}" data-n="${esc(it.n || '')}"><div class="fr-poster">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : `<div class="fr-noimg">${esc(it.n)}</div>`}${bar || ''}</div><small>${esc(it.n)}</small></div>`;
+    return `<div class="fr-item" role="link" tabindex="0" data-kind="${kind}" data-id="${esc(it.id || '')}" data-n="${esc(it.n || '')}"><div class="fr-poster">${po ? `<img loading="lazy" src="${IMG(po)}" alt="">` : `<div class="fr-noimg">${esc(it.n)}</div>`}${bar || ''}</div><small>${esc(it.n)}</small>${pfOf(it) ? `<small class="fr-pf">${pfNameBadgeHtml(pfOf(it), 14)} ${esc(pfOf(it))}</small>` : ''}</div>`;
   };
   const row = (title, items, barOf, kind = 'tv') => items && items.length ? `<div class="panel"><h3>${title}</h3><div class="fr-grid">${items.map(it => tile(it, barOf ? barOf(it) : '', kind)).join('')}</div></div>` : '';
   // Même barre que sous nos propres affiches : orange = en cours, bleu sur fond vert = revisionnage.
@@ -593,10 +597,11 @@ route('friend', async (el, rest) => {
       <div class="stat-card"><div class="k">Séries commencées</div><div class="v">${esc(st.shows)}</div></div>
       <div class="stat-card"><div class="k">Films vus</div><div class="v">${esc(st.movies)}</div></div></div>` : '<p class="hint" style="color:var(--muted)">Rien n\'a encore été publié.</p>'}
     ${row('▶️ En cours', s.watching, friendBar)}
-    ${s.recent && s.recent.length ? `<div class="panel"><h3>${icon('clock')} Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
+    ${s.recent && s.recent.length ? `<div class="panel"><h3>${icon('clock')} Activité récente</h3>${s.recent.map(g => `<div class="feed-line">${esc(activityText(g))}${pfOf(g) ? ` <span class="fr-pf">· sur ${pfNameBadgeHtml(pfOf(g), 14)} ${esc(pfOf(g))}</span>` : ''} <span class="sub">· ${esc(fmtAgo(g.at))}</span></div>`).join('')}</div>` : ''}
     ${row('❤️ Séries favorites', s.favShows)}
     ${row('🎬 Films favoris', s.favMovies, null, 'movie')}
     <p style="margin-top:14px"><button class="btn ghost sm" id="frUnfollow">Retirer ${esc(p.pseudo)} de mes amis</button></p>`;
+  loadProviderLogos().then(ok => { if (ok) pfRefreshLogos(el); });
   // Toucher une affiche : fiche de l'œuvre (la mienne si je l'ai, sinon l'aperçu TMDB).
   el.querySelectorAll('.fr-item[data-kind]').forEach(t => {
     const go = () => openFriendWork(t.dataset.kind, t.dataset.id, t.dataset.n);
@@ -782,12 +787,13 @@ function reconcileDuplicateMovies() {
         if (movieEmotionOf(c) && !movieEmotionOf(d)) bag('movieEmotions')[dn] = movieEmotionOf(c);
         if (isFavMovie(c) && !isFavMovie(d)) bag('favMovies')[dn] = true;
         if (movieProgressOf(c) && !movieProgressOf(d)) bag('movieProgress')[dn] = movieProgressOf(c);
+        if (moviePlatformOf(cn) && !moviePlatformOf(dn)) bag('moviePlatform')[dn] = moviePlatformOf(cn); // « Vu sur … »
         if (!ids[ki] && ids[i]) { bag('movieTmdb')[dn] = (userState.movieTmdb && userState.movieTmdb[cn]) || tmdbCache.movies[cn]; ids[ki] = ids[i]; }
         for (const l of userState.userLists || []) if (l.movies && l.movies.includes(cn)) l.movies = [...new Set(l.movies.map(x => x === cn ? dn : x))];
         const rv = userState.reviews || {};
         if (rv['m:' + cn] && !rv['m:' + dn]) { rv['m:' + dn] = rv['m:' + cn]; }
         if (rv['m:' + cn]) delete rv['m:' + cn];
-        for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRewatchDates', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb']) if (userState[k]) delete userState[k][cn];
+        for (const k of ['movieStatus', 'movieWatchedAt', 'movieRewatch', 'movieRewatchDates', 'movieRatings', 'movieEmotions', 'favMovies', 'movieProgress', 'movieTmdb', 'moviePlatform']) if (userState[k]) delete userState[k][cn];
       }
       drop.add(i);
     }

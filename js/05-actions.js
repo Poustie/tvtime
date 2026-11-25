@@ -210,6 +210,9 @@ function toggleSeen(sh, season, number, seen) {
     if (hadRemove) delete userState.seenRemove[k];
     // Hors de l'export (ou numérotation incertaine) : l'épisode n'est pas rendu par la base, il faut un seenAdd.
     if (!hadRemove || !inBase) userState.seenAdd[k] = { at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
+    // Épisode vu d'une série sans plateforme (commencée ou non) : le message du bas proposera « 📺 Où ? »,
+    // au plus une fois par série et par session (offerShowPlatform, 12-fiches-serie-episode.js)
+    if (typeof offerShowPlatform === 'function') offerShowPlatform(sh, season, number);
   } else {
     sh.seenKeys.delete(k);
     const hadAdd = !!userState.seenAdd[k];

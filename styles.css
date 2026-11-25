@@ -1061,3 +1061,47 @@ html.zoomed .hd-bg { display: none; }
 .modal h2, .sheet-list, .sheet-item, .sheet-item *, .modal .row .btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 body:has(#modalRoot > .backdrop) #app, body:has(#modalRoot > .backdrop) .bottom-nav { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .sheet-item { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+
+/* ---- Plateforme de visionnage « Vu sur … » (PF1) ---- */
+.pf-slot:empty { display: none; }
+.pf-line { display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 0; padding: 6px 14px; min-height: 44px; max-width: 100%;
+  border: 1px dashed var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit;
+  font-size: max(12px, calc(13px * var(--fs, 1))); text-align: left; cursor: pointer; touch-action: manipulation; }
+.pf-line.set { border-style: solid; background: var(--bg3); color: var(--text, inherit); }
+.pf-line b { color: var(--text); font-weight: 700; } /* pas --accent : jaune illisible sur fond clair */
+.pf-line .pf-inh, .pf-line .pf-edit { color: var(--muted); }
+.pf-line .pf-inh { font-size: max(11px, calc(12px * var(--fs, 1))); }
+.pf-tag { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin-left: 6px; padding: 1px 6px 1px 2px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg3); color: var(--muted); font-size: max(10px, calc(10.5px * var(--fs, 1))); font-weight: 600; line-height: 1.4;
+  max-width: 12em; white-space: nowrap; }
+.pf-tag > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.ep:not(.seen) .pf-tag { display: none; }
+.sheet-sec { padding: 12px 8px 4px; color: var(--muted); font-size: max(11px, calc(12px * var(--fs, 1))); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.sheet-sec:first-child { padding-top: 2px; }
+.sb-row.pf-row { grid-template-columns: 136px 1fr; }
+/* Thème clair : barres « épisodes » (jaune pâle sur gris clair, peu visibles) et leur légende en couleur d'encre plus foncée */
+html.light .pf-row .sb-track > i.e, html.light .pf-legend .sb-key.e { background: var(--accent-ink, var(--accent)); }
+.fr-pf { color: var(--muted); font-size: max(11px, calc(12px * var(--fs, 1))); }
+.fr-item small.fr-pf { margin-top: 2px; }
+/* Logos des plateformes (images TMDB) et pastilles de repli (initiales / icône dessinée) — tailles fixées en ligne */
+.pf-logo, .pf-badge { display: inline-flex; flex: none; vertical-align: middle; }
+.pf-logo { object-fit: cover; background: var(--bg3); box-shadow: 0 0 0 1px var(--line); } /* contour : logos noirs sur fond sombre */
+.pf-badge { align-items: center; justify-content: center; box-sizing: border-box; overflow: hidden; }
+.pf-init { color: #fff; font-weight: 800; line-height: 1; letter-spacing: -.02em; box-shadow: 0 0 0 1px var(--line); }
+.pf-ic { color: var(--muted); }
+.pf-ic svg.ic { width: 100%; height: 100%; vertical-align: 0; }
+.pf-sheet .si-ico { display: inline-flex; align-items: center; justify-content: center; }
+.pf-sheet .si-txt { flex: 1; }
+.pf-sheet .si-check { flex: none; margin-left: auto; display: inline-flex; color: var(--accent-ink, var(--accent)); }
+.pf-sheet .si-check svg.ic { width: 22px; height: 22px; stroke-width: 2.4; }
+.pf-sheet .sheet-item.on .pf-logo, .pf-sheet .sheet-item.on .pf-badge { box-shadow: 0 0 0 2px var(--accent-ink, var(--accent)); }
+.pf-sheet .sheet-item.danger .pf-ic { color: #ef4444; }
+.pf-line .pf-logo, .pf-line .pf-badge { margin-left: -6px; }
+.pf-lbl { display: flex; align-items: center; gap: 6px; }
+.pf-lbl > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.fr-pf .pf-logo, .fr-pf .pf-badge { margin-right: 2px; vertical-align: -3px; }
+/* Boutons du message du bas (« Annuler », « 📺 Où ? ») : cible tactile de 44 px sans agrandir le message ;
+   ils restent les seuls éléments cliquables (pointer-events, voir « Modal / toast »). */
+.toast .toast-undo { min-height: 44px; margin: -11px 0; padding: 4px 6px; white-space: nowrap; }
+.toast.toast-multi { width: max-content; max-width: calc(100vw - 24px); gap: 8px; }
+.toast.toast-multi > span { flex: 1; min-width: 0; }
